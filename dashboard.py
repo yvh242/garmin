@@ -28,20 +28,6 @@ def load_and_process_data(uploaded_file):
     # Let op: 'Beste\xa0' (non-breaking space) wordt hier ook opgevangen
     df.columns = df.columns.str.strip().str.replace('Â®', '', regex=False).str.replace('\xa0', '', regex=False)
 
-    # Controleer of alle vereiste kolommen aanwezig zijn
-    required_cols = [
-        "Activiteittype", "Datum", "Afstand", "Tijd",
-        "Gem. HS", "Max. HS", "Gem. cadans", "Maximale cadans",
-        "Gemiddeld tempo", "Beste tempo", "Totale stijging", "Totale daling",
-        "Gem. staplengte", "Stappen",
-        "Min. temp.", "Decompressie", "Beste", "Favoriet", "Titel"
-    ]
-    missing_cols = [col for col in required_cols if col not in df.columns]
-
-    if missing_cols:
-        st.error(f"Het bestand mist de volgende vereiste kolommen: {', '.join(missing_cols)}. Zorg ervoor dat de kolomnamen correct zijn benoemd, inclusief hoofdletters/kleine letters en eventuele speciale tekens.")
-        return None
-
     # Datum conversie
     df['Datum'] = pd.to_datetime(df['Datum'], errors='coerce')
     df.dropna(subset=['Datum'], inplace=True) # Verwijder rijen met ongeldige datums
