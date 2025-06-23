@@ -30,10 +30,10 @@ def load_and_process_data(uploaded_file):
 
     # Controleer of alle vereiste kolommen aanwezig zijn
     required_cols = [
-        "Activiteittype", "Datum", "Afstand", "Calorieën", "Tijd",
+        "Activiteittype", "Datum", "Afstand", "Tijd",
         "Gem. HS", "Max. HS", "Gem. cadans", "Maximale cadans",
         "Gemiddeld tempo", "Beste tempo", "Totale stijging", "Totale daling",
-        "Gem. staplengte", "Training Stress Score", "Stappen",
+        "Gem. staplengte", "Stappen",
         "Min. temp.", "Decompressie", "Beste", "Favoriet", "Titel"
     ]
     missing_cols = [col for col in required_cols if col not in df.columns]
