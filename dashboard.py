@@ -242,7 +242,14 @@ if uploaded_file is not None and not filtered_df.empty:
     st.markdown("---")
 
     # --- Tabs voor Gedetailleerde Inzichten ---
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Afstand & Duur", "💓 Tempo & Hartslag", "🏃‍♀️ Activiteitentypen", "📈 Vergelijking", "📋 Ruwe Data"])
+    tab1, tab2, tab3, tab4, tab_new_period_overview, tab5 = st.tabs([
+        "📊 Afstand & Duur",
+        "💓 Tempo & Hartslag",
+        "🏃‍♀️ Activiteitentypen",
+        "📈 Vergelijking",
+        "🗓️ Overzicht per Periode", # NIEUW TABBLAD
+        "📋 Ruwe Data"
+    ])
 
     with tab1:
         st.header("Afstand en Duur Overzicht")
@@ -436,7 +443,7 @@ if uploaded_file is not None and not filtered_df.empty:
                 st.info("Stappen data ontbreekt voor deze analyse.")
 
 
-    with tab4:
+    with tab4: # Oorspronkelijke Vergelijking tab (onveranderd)
         st.header("Vergelijking van Afstand en Duur")
         st.markdown("Bekijk je **gemiddelde** afstand en duur geaggregeerd per week of per maand, afhankelijk van de geselecteerde periode.")
 
@@ -523,6 +530,119 @@ if uploaded_file is not None and not filtered_df.empty:
                     st.info("Niet genoeg data (afstand, duur, of datum) om de maandelijkse vergelijking te tonen.")
         else:
             st.info("Selecteer een periode met data in het zijmenu om de vergelijking te zien.")
+
+    ---
+
+    # NIEUW TABBLAD: Overzicht per Periode
+    with tab_new_period_overview:
+        st.header("Overzicht per Week of Maand")
+        st.markdown("Kies zelf of je de totale en gemiddelde waarden per **week** of per **maand** wilt bekijken.")
+
+        # Keuzemenu voor week of maand
+        aggregation_period_new_tab = st.radio(
+            "Selecteer periode voor overzicht:",
+            ('Per Week', 'Per Maand'),
+            horizontal=True,
+            key='new_tab_agg_period' # Belangrijk: unieke key voor deze radio button
+        )
+        st.markdown(f"**Toont overzicht {aggregation_period_new_tab.lower()}**")
+
+        if (not filtered_df.empty and
+            'distance_km' in filtered_df.columns and filtered_df['distance_km'].notna().any() and
+            'duration_seconds' in filtered_df.columns and filtered_df['duration_seconds'].notna().any() and
+            'year_week' in filtered_df.columns and filtered_df['year_week'].notna().any() and
+            'year_month' in filtered_df.columns and filtered_df['year_month'].notna().any()):
+
+            if aggregation_period_new_tab == 'Per Week':
+                df_agg_new = filtered_df.groupby('year_week').agg(
+                    total_distance=('distance_km', 'sum'),
+                    avg_distance=('distance_km', 'mean'),
+                    total_duration=('duration_seconds', 'sum'),
+                    avg_duration=('duration_seconds', 'mean')
+                ).reset_index()
+                df_agg_new.columns = ['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)']
+                df_agg_new['Totale Duur (HH:MM:SS)'] = df_agg_new['Totale Duur (sec)'].apply(format_duration)
+                df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
+                x_label = 'Jaar-Week'
+            else: # Per Maand
+                df_agg_new = filtered_df.groupby('year_month').agg(
+                    total_distance=('distance_km', 'sum'),
+                    avg_distance=('distance_km', 'mean'),
+                    total_duration=('duration_seconds', 'sum'),
+                    avg_duration=('duration_seconds', 'mean')
+                ).reset_index()
+                df_agg_new.columns = ['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)']
+                df_agg_new['Totale Duur (HH:MM:SS)'] = df_agg_new['Totale Duur (sec)'].apply(format_duration)
+                df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
+                x_label = 'Jaar-Maand'
+
+            # --- Grafieken voor Totaal en Gemiddeld Afstand ---
+            col_total_dist_new, col_avg_dist_new = st.columns(2)
+
+            with col_total_dist_new:
+                st.subheader(f"Totale Afstand {aggregation_period_new_tab.lower()}")
+                fig_total_dist_new = px.bar(
+                    df_agg_new,
+                    x='Periode',
+                    y='Totaal Afstand (km)',
+                    title=f'Totale Afstand {aggregation_period_new_tab.lower()}',
+                    labels={'Periode': x_label, 'Totaal Afstand (km)': 'Totaal Afstand (km)'},
+                    template="plotly_dark",
+                    text_auto='.2f'
+                )
+                fig_total_dist_new.update_traces(textposition='outside', marker_color='#FF4B4B') # Streamlit's primaire kleur
+                fig_total_dist_new.update_layout(showlegend=False)
+                st.plotly_chart(fig_total_dist_new, use_container_width=True)
+
+            with col_avg_dist_new:
+                st.subheader(f"Gemiddelde Afstand {aggregation_period_new_tab.lower()}")
+                fig_avg_dist_new = px.bar(
+                    df_agg_new,
+                    x='Periode',
+                    y='Gem. Afstand (km)',
+                    title=f'Gemiddelde Afstand {aggregation_period_new_tab.lower()}',
+                    labels={'Periode': x_label, 'Gem. Afstand (km)': 'Gemiddelde Afstand (km)'},
+                    template="plotly_dark",
+                    text_auto='.2f'
+                )
+                fig_avg_dist_new.update_traces(textposition='outside', marker_color='#636EFA') # Een andere standaard Plotly kleur
+                fig_avg_dist_new.update_layout(showlegend=False)
+                st.plotly_chart(fig_avg_dist_new, use_container_width=True)
+
+            # --- Grafieken voor Totaal en Gemiddeld Duur ---
+            col_total_dur_new, col_avg_dur_new = st.columns(2)
+
+            with col_total_dur_new:
+                st.subheader(f"Totale Duur {aggregation_period_new_tab.lower()}")
+                fig_total_dur_new = px.bar(
+                    df_agg_new,
+                    x='Periode',
+                    y='Totale Duur (sec)',
+                    title=f'Totale Duur {aggregation_period_new_tab.lower()}',
+                    labels={'Periode': x_label, 'Totale Duur (sec)': 'Totale Duur (seconden)'},
+                    template="plotly_dark",
+                    text='Totale Duur (HH:MM:SS)'
+                )
+                fig_total_dur_new.update_traces(textposition='outside', marker_color='#00CC96') # Nog een andere standaard Plotly kleur
+                fig_total_dur_new.update_layout(showlegend=False)
+                st.plotly_chart(fig_total_dur_new, use_container_width=True)
+
+            with col_avg_dur_new:
+                st.subheader(f"Gemiddelde Duur {aggregation_period_new_tab.lower()}")
+                fig_avg_dur_new = px.bar(
+                    df_agg_new,
+                    x='Periode',
+                    y='Gem. Duur (sec)',
+                    title=f'Gemiddelde Duur {aggregation_period_new_tab.lower()}',
+                    labels={'Periode': x_label, 'Gem. Duur (sec)': 'Gemiddelde Duur (seconden)'},
+                    template="plotly_dark",
+                    text='Gem. Duur (HH:MM:SS)'
+                )
+                fig_avg_dur_new.update_traces(textposition='outside', marker_color='#EF553B') # En weer een andere
+                fig_avg_dur_new.update_layout(showlegend=False)
+                st.plotly_chart(fig_avg_dur_new, use_container_width=True)
+        else:
+            st.info("Niet genoeg data (afstand, duur, of geldige datums/periodes) om het overzicht te tonen voor de geselecteerde filters.")
 
 
     with tab5: # Ruwe Data tab
