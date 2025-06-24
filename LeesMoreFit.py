@@ -25,7 +25,7 @@ def format_duration(seconds):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 @st.cache_data(show_spinner="FIT bestand(en) inlezen en verwerken...")
-def parse_fit_file(file_bytes, activity_id):
+def parse_fit_file(file_bytes, activity_id, speed_threshold_kmh): # <-- NIEUW: speed_threshold_kmh als parameter
     """
     Parses a .fit file from bytes and extracts relevant activity data.
     Returns a DataFrame with key metrics.
@@ -94,6 +94,7 @@ def parse_fit_file(file_bytes, activity_id):
         session_max_speed_kmh = 0
         session_total_elevation_gain_m = 0
         activity_type = "Onbekend"
+        session_total_timer_time = 0 # Behoud deze voor mogelijk latere referentie
 
         for session in fit_file.get_messages('session'):
             session_dict = session.as_dict()
@@ -105,39 +106,44 @@ def parse_fit_file(file_bytes, activity_id):
                 session_max_speed_kmh = session_dict['max_speed'] * 3.6
             if 'total_elevation_gain' in session_dict and session_dict['total_elevation_gain'] is not None:
                  session_total_elevation_gain_m = session_dict['total_elevation_gain']
+            if 'total_timer_time' in session_dict and session_dict['total_timer_time'] is not None: # Lees total_timer_time
+                session_total_timer_time = session_dict['total_timer_time']
             break
 
         df['Activiteitstype'] = activity_type
         df['Totale_Calorieën'] = session_calories
         df['Max_Snelheid_Activiteit'] = session_max_speed_kmh
         df['Totale_Stijging_Meters'] = session_total_elevation_gain_m
+        df['Totale_Duur_Timer_Sec'] = session_total_timer_time # <-- NIEUW: Voeg toe aan DataFrame
 
         # --- Bereken 'Tijd in Beweging' ---
-        SPEED_THRESHOLD_KMH = 0.5 # Drempelwaarde voor stilstand in km/u
-
         total_moving_time_for_activity = 0 # Initialiseer met 0
 
-        # Zorg ervoor dat DatumTijd en Snelheid_kmh kolommen aanwezig en gevuld zijn
-        if 'Snelheid_kmh' in df.columns and 'DatumTijd' in df.columns and not df.empty:
-            df['Snelheid_kmh'] = df['Snelheid_kmh'].fillna(0) # Vul NaN snelheden op met 0
-            # Vul ontbrekende datumtijdwaarden op om .diff() te laten werken
+        # Controleer of we voldoende gegevens hebben om tijd in beweging te berekenen
+        # en of de snelheidsdata niet allemaal nul zijn (wat kan gebeuren bij stationaire activiteiten)
+        if 'Snelheid_kmh' in df.columns and 'DatumTijd' in df.columns and not df.empty and \
+           df['Snelheid_kmh'].dropna().any(): # Controleer of er ten minste één niet-nul snelheid is
+            
+            df['Snelheid_kmh'] = df['Snelheid_kmh'].fillna(0)
             df['DatumTijd'] = df['DatumTijd'].fillna(method='ffill').fillna(method='bfill')
 
-            # Hercontroleer op leegte na opvulling
-            if not df['DatumTijd'].empty:
-                df['Is_Moving'] = df['Snelheid_kmh'] > SPEED_THRESHOLD_KMH
-                df['Time_Diff_Sec'] = df['DatumTijd'].diff().dt.total_seconds().fillna(0) # Vul diff-NaN's op met 0
+            # Hercontroleer op leegte na opvulling en als DatumTijd geen geldige tijdreeks is
+            if not df['DatumTijd'].empty and df['DatumTijd'].diff().dt.total_seconds().sum() > 0:
+                df['Is_Moving'] = df['Snelheid_kmh'] > speed_threshold_kmh # <-- Gebruik de parameter
+                df['Time_Diff_Sec'] = df['DatumTijd'].diff().dt.total_seconds().fillna(0)
 
                 df['Moving_Time_Contribution_Sec'] = df.apply(
                     lambda row: row['Time_Diff_Sec'] if row['Is_Moving'] else 0, axis=1
                 )
                 total_moving_time_for_activity = df['Moving_Time_Contribution_Sec'].sum()
-        
-        # Fallback als de bewegingstijd 0 is (bijv. geen snelheidsdata of altijd stilstand)
-        # Gebruik de totale verstreken tijd (elapsed time)
-        if total_moving_time_for_activity == 0 and 'Tijd_sec' in df.columns and not df['Tijd_sec'].empty:
-             total_moving_time_for_activity = df['Tijd_sec'].max()
 
+        # Fallback logica:
+        # 1. Als de berekende moving time 0 is (of er geen snelheidsdata was), probeer total_timer_time uit sessiebericht
+        # 2. Als dat ook 0 is, gebruik dan de totale verstreken tijd (elapsed time)
+        if total_moving_time_for_activity == 0 and session_total_timer_time > 0:
+            total_moving_time_for_activity = session_total_timer_time
+        elif total_moving_time_for_activity == 0 and 'Tijd_sec' in df.columns and not df['Tijd_sec'].empty:
+             total_moving_time_for_activity = df['Tijd_sec'].max()
 
         # Voeg de berekende totale tijd in beweging toe aan elke rij voor deze activiteit
         df['Totale_Tijd_in_Beweging_Activiteit_Sec'] = total_moving_time_for_activity
@@ -155,19 +161,41 @@ with st.sidebar:
 
     uploaded_fit_files = st.file_uploader("Kies .fit bestand(en)", type=["fit"], accept_multiple_files=True)
 
+    # NIEUW: Slider voor drempelwaarde
+    st.markdown("---")
+    st.subheader("Instellingen 'Tijd in Beweging'")
+    speed_threshold = st.slider(
+        "Snelheidsdrempel voor 'in beweging' (km/u):",
+        min_value=0.0,
+        max_value=5.0,
+        value=0.5, # Standaardwaarde
+        step=0.1,
+        help="Snelheid (in km/u) waaronder activiteit als stilstand wordt beschouwd."
+    )
+    st.markdown("---")
+
     if 'fit_dfs_list' not in st.session_state:
         st.session_state.fit_dfs_list = []
 
+    # Reset data if new files are uploaded or threshold changes
     if uploaded_fit_files:
         current_file_names = {f.name for f in uploaded_fit_files}
         previous_file_names = {df.attrs['original_filename'] for df in st.session_state.fit_dfs_list if 'original_filename' in df.attrs}
-
+        
+        # Determine if re-parsing is needed
+        reparse_needed = False
         if current_file_names != previous_file_names:
+            reparse_needed = True
+        elif 'last_speed_threshold' not in st.session_state or st.session_state.last_speed_threshold != speed_threshold:
+            reparse_needed = True
+            
+        if reparse_needed:
             st.session_state.fit_dfs_list = []
             st.info(f"Verwerken van {len(uploaded_fit_files)} bestand(en)...")
             all_dfs = []
             for idx, uploaded_file in enumerate(uploaded_fit_files):
-                df_temp = parse_fit_file(uploaded_file.read(), uploaded_file.name)
+                # <-- PAS HIER AAN: Geef speed_threshold door
+                df_temp = parse_fit_file(uploaded_file.read(), uploaded_file.name, speed_threshold)
                 if not df_temp.empty:
                     df_temp.attrs['original_filename'] = uploaded_file.name
                     all_dfs.append(df_temp)
@@ -175,6 +203,7 @@ with st.sidebar:
             if all_dfs:
                 st.session_state.fit_df = pd.concat(all_dfs, ignore_index=True)
                 st.session_state.fit_dfs_list = all_dfs
+                st.session_state.last_speed_threshold = speed_threshold # Sla de drempel op
                 st.success(f"{len(all_dfs)} FIT bestand(en) succesvol ingelezen!")
             else:
                 st.warning("Geen bruikbare data gevonden in de geüploade FIT bestanden.")
@@ -186,7 +215,8 @@ with st.sidebar:
     else:
         st.session_state.fit_df = pd.DataFrame()
         st.session_state.fit_dfs_list = []
-        st.info("Upload een of meerdere .fit bestanden in de zijbalk om je sportactiviteit(en) te analyseren. Deze app is specifiek voor .fit-bestanden.")
+        st.info("Upload een of meerdere .fit bestanden met je sportactiviteiten om het dashboard te genereren.")
+
 
 # --- Hoofd Dashboard Content ---
 st.title("🚴‍♂️ FIT Bestand Analyse Dashboard")
@@ -214,7 +244,7 @@ else:
                     lat="Latitude",
                     lon="Longitude",
                     color="Activity_ID",
-                    zoom=10, # Aangepast: Probeer een lagere zoomwaarde voor een grotere kaartweergave
+                    zoom=10,
                     height=700,
                     mapbox_style="open-street-map",
                     title="Afgelegde Routes",
@@ -261,35 +291,30 @@ else:
             summary_df = df.groupby('Activity_ID').agg(
                 Datum=('DatumTijd', lambda x: x.min().strftime('%Y-%m-%d') if not x.empty else 'N/B'),
                 Totale_Afstand_km=('Afstand_km', 'max'),
-                # Gebruik de berekende "Tijd in Beweging"
                 Totale_Duur_Sec=('Totale_Tijd_in_Beweging_Activiteit_Sec', 'first'),
                 Gemiddelde_Hartslag=('Hartslag_bpm', lambda x: x[x > 0].mean() if not x.empty else 0),
                 Maximale_Hartslag=('Hartslag_bpm', 'max'),
                 Activiteitstype=('Activiteitstype', 'first')
             ).reset_index()
 
-            # Calculate average speed based on total distance and accurate moving duration
             summary_df['Gemiddelde_Snelheid_kmh'] = summary_df.apply(
                 lambda row: (row['Totale_Afstand_km'] / (row['Totale_Duur_Sec'] / 3600)) if row['Totale_Duur_Sec'] > 0 else 0,
                 axis=1
             )
 
-            # Format the total duration (now "Tijd in Beweging")
             summary_df['Totale_Duur'] = summary_df['Totale_Duur_Sec'].apply(format_duration)
 
-            # Round numerical columns and ensure proper display
             summary_df['Totale_Afstand_km'] = summary_df['Totale_Afstand_km'].round(2)
             summary_df['Gemiddelde_Snelheid_kmh'] = summary_df['Gemiddelde_Snelheid_kmh'].round(1)
             summary_df['Gemiddelde_Hartslag'] = summary_df['Gemiddelde_Hartslag'].round(0).astype('Int64')
             summary_df['Maximale_Hartslag'] = summary_df['Maximale_Hartslag'].round(0).astype('Int64')
 
-            # Define and rename columns for display in the table
             display_columns = [
                 'Bestandsnaam',
                 'Datum',
                 'Activiteitstype',
                 'Afstand (km)',
-                'Duur (UU:MM:SS)', # This is now "Tijd in Beweging"
+                'Duur (UU:MM:SS)',
                 'Gem. Snelheid (km/u)',
                 'Gem. Hartslag (bpm)',
                 'Max. Hartslag (bpm)'
