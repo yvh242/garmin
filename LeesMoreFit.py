@@ -25,7 +25,7 @@ def format_duration(seconds):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 @st.cache_data(show_spinner="FIT bestand(en) inlezen en verwerken...")
-def parse_fit_file(file_bytes, activity_id, speed_threshold_kmh):
+def parse_fit_file(file_bytes, activity_id):
     """
     Parses a .fit file from bytes and extracts relevant activity data.
     Returns a DataFrame with key metrics.
@@ -57,6 +57,7 @@ def parse_fit_file(file_bytes, activity_id, speed_threshold_kmh):
         df.rename(columns=column_renames, inplace=True)
 
         # Convert raw semicircles GPS to degrees
+        # 1 semicircle = 180 / 2^31 degrees
         if 'Latitude_semicircles' in df.columns and 'Longitude_semicircles' in df.columns:
             df['Latitude'] = df['Latitude_semicircles'] * (180 / 2**31)
             df['Longitude'] = df['Longitude_semicircles'] * (180 / 2**31)
@@ -74,7 +75,7 @@ def parse_fit_file(file_bytes, activity_id, speed_threshold_kmh):
         if 'Snelheid_ms' in df.columns:
             df['Snelheid_kmh'] = df['Snelheid_ms'] * 3.6
         else:
-            df['Snelheid_kmh'] = 0.0 # Default to 0 if speed is not available
+            df['Snelheid_kmh'] = 0.0
 
         # Ensure datetime column is correct
         if 'DatumTijd' in df.columns:
@@ -90,12 +91,13 @@ def parse_fit_file(file_bytes, activity_id, speed_threshold_kmh):
         df['Activity_ID'] = activity_id
 
         # --- Extract Session/Activity Summary Data (for KPIs) ---
+        # Initialize with default values
         session_calories = 0
         session_max_speed_kmh = 0
         session_total_elevation_gain_m = 0
         activity_type = "Onbekend"
-        session_total_timer_time = None # Initialiseer met None, niet 0
 
+        # Loop through session messages to get summary data
         for session in fit_file.get_messages('session'):
             session_dict = session.as_dict()
             if 'sport' in session_dict and session_dict['sport'] is not None:
@@ -103,60 +105,17 @@ def parse_fit_file(file_bytes, activity_id, speed_threshold_kmh):
             if 'total_calories' in session_dict and session_dict['total_calories'] is not None:
                 session_calories = session_dict['total_calories']
             if 'max_speed' in session_dict and session_dict['max_speed'] is not None:
-                session_max_speed_kmh = session_dict['max_speed'] * 3.6
+                session_max_speed_kmh = session_dict['max_speed'] * 3.6 # Convert m/s to km/h
             if 'total_elevation_gain' in session_dict and session_dict['total_elevation_gain'] is not None:
                  session_total_elevation_gain_m = session_dict['total_elevation_gain']
-            if 'total_timer_time' in session_dict and session_dict['total_timer_time'] is not None:
-                session_total_timer_time = session_dict['total_timer_time']
-            break
+            break # Take the first found session, usually one session per file for an activity
 
+        # Add these session-level totals as single-value columns to the DataFrame
+        # This makes it easier to pass them around and display in KPIs
         df['Activiteitstype'] = activity_type
         df['Totale_Calorieën'] = session_calories
         df['Max_Snelheid_Activiteit'] = session_max_speed_kmh
         df['Totale_Stijging_Meters'] = session_total_elevation_gain_m
-        df['Totale_Duur_Timer_Sec'] = session_total_timer_time # Voeg toe aan DataFrame voor inspectie
-
-        # --- Bereken 'Tijd in Beweging' ---
-        calculated_moving_time = 0 # Initialiseer de uiteindelijke bewegingstijd
-
-        # Prioriteit 1: Gebruik de 'total_timer_time' uit het sessiebericht.
-        # Dit is vaak de meest directe meting van 'actieve tijd' door het apparaat.
-        if session_total_timer_time is not None and session_total_timer_time > 0:
-            calculated_moving_time = session_total_timer_time
-        
-        # Prioriteit 2: Als total_timer_time niet beschikbaar was of 0,
-        # bereken dan de bewegingstijd op basis van snelheid en tijdsverschillen.
-        if calculated_moving_time == 0:
-            if 'Snelheid_kmh' in df.columns and 'DatumTijd' in df.columns and not df.empty:
-                # Werk op een kopie om SettingWithCopyWarning te voorkomen
-                df_temp = df.copy() 
-
-                # Vul ontbrekende snelheids- of datumtijdwaarden op om berekeningen te voorkomen
-                df_temp['Snelheid_kmh'] = df_temp['Snelheid_kmh'].fillna(0)
-                # Gebruik ffill/bfill voor DatumTijd om geldige tijdsverschillen te krijgen
-                df_temp['DatumTijd'] = df_temp['DatumTijd'].fillna(method='ffill').fillna(method='bfill')
-
-                # Zorg ervoor dat er voldoende geldige datumtijdpunten zijn voor diff
-                if not df_temp['DatumTijd'].empty and len(df_temp['DatumTijd']) > 1:
-                    df_temp['Time_Diff_Sec'] = df_temp['DatumTijd'].diff().dt.total_seconds().fillna(0)
-
-                    # Bepaal 'Is_Moving' op basis van de snelheid drempel
-                    df_temp['Is_Moving'] = df_temp['Snelheid_kmh'] > speed_threshold_kmh
-
-                    # Tel alleen de tijdsverschillen op wanneer de sporter in beweging was
-                    moving_time_contributions = df_temp.apply(
-                        lambda row: row['Time_Diff_Sec'] if row['Is_Moving'] else 0, axis=1
-                    )
-                    calculated_moving_time = moving_time_contributions.sum()
-
-        # Prioriteit 3 (Fallback): Als de bovenstaande methoden 0 opleverden,
-        # gebruik dan de totale verstreken tijd (elapsed time).
-        if calculated_moving_time == 0 and 'Tijd_sec' in df.columns and not df['Tijd_sec'].empty:
-             calculated_moving_time = df['Tijd_sec'].max()
-
-
-        # Voeg de berekende totale tijd in beweging toe aan elke rij voor deze activiteit
-        df['Totale_Tijd_in_Beweging_Activiteit_Sec'] = calculated_moving_time
 
         return df
 
@@ -169,51 +128,33 @@ with st.sidebar:
     st.header("Upload je FIT-bestand(en)")
     st.markdown("Upload hier één of meerdere .fit bestanden van je sportactiviteiten.")
 
+    # Gebruik 'accept_multiple_files=True' om meerdere bestanden toe te staan
     uploaded_fit_files = st.file_uploader("Kies .fit bestand(en)", type=["fit"], accept_multiple_files=True)
 
-    # Slider voor drempelwaarde
-    st.markdown("---")
-    st.subheader("Instellingen 'Tijd in Beweging'")
-    st.markdown("Deze drempel wordt alleen gebruikt als 'Timer Time' niet in het bestand staat.")
-    speed_threshold = st.slider(
-        "Snelheidsdrempel voor 'in beweging' (km/u):",
-        min_value=0.0,
-        max_value=5.0,
-        value=0.5, # Standaardwaarde
-        step=0.1,
-        help="Snelheid (in km/u) waaronder activiteit als stilstand wordt beschouwd."
-    )
-    st.markdown("---")
-
+    # Initialiseer st.session_state.fit_dfs_list om geparste individuele DFs te bewaren
     if 'fit_dfs_list' not in st.session_state:
         st.session_state.fit_dfs_list = []
 
-    # Reset data if new files are uploaded or threshold changes
     if uploaded_fit_files:
+        # Check if current selection is different from previous to avoid re-parsing
         current_file_names = {f.name for f in uploaded_fit_files}
         previous_file_names = {df.attrs['original_filename'] for df in st.session_state.fit_dfs_list if 'original_filename' in df.attrs}
-        
-        # Determine if re-parsing is needed
-        reparse_needed = False
+
         if current_file_names != previous_file_names:
-            reparse_needed = True
-        elif 'last_speed_threshold' not in st.session_state or st.session_state.last_speed_threshold != speed_threshold:
-            reparse_needed = True
-            
-        if reparse_needed:
-            st.session_state.fit_dfs_list = []
+            st.session_state.fit_dfs_list = [] # Reset de lijst bij een nieuwe selectie
             st.info(f"Verwerken van {len(uploaded_fit_files)} bestand(en)...")
             all_dfs = []
             for idx, uploaded_file in enumerate(uploaded_fit_files):
-                df_temp = parse_fit_file(uploaded_file.read(), uploaded_file.name, speed_threshold)
+                # Gebruik de bestandsnaam als unieke Activity_ID
+                df_temp = parse_fit_file(uploaded_file.read(), uploaded_file.name)
                 if not df_temp.empty:
-                    df_temp.attrs['original_filename'] = uploaded_file.name
+                    df_temp.attrs['original_filename'] = uploaded_file.name # Bewaar de originele bestandsnaam
                     all_dfs.append(df_temp)
 
             if all_dfs:
+                # Combineer alle geparste DataFrames in één groot DataFrame
                 st.session_state.fit_df = pd.concat(all_dfs, ignore_index=True)
-                st.session_state.fit_dfs_list = all_dfs
-                st.session_state.last_speed_threshold = speed_threshold
+                st.session_state.fit_dfs_list = all_dfs # Bewaar ook de individuele DFs voor eventuele toekomstige behoeften
                 st.success(f"{len(all_dfs)} FIT bestand(en) succesvol ingelezen!")
             else:
                 st.warning("Geen bruikbare data gevonden in de geüploade FIT bestanden.")
@@ -223,10 +164,10 @@ with st.sidebar:
             if not st.session_state.fit_df.empty:
                 st.success(f"{len(uploaded_fit_files)} FIT bestand(en) zijn al geladen.")
     else:
+        # Reset de DataFrames als er geen bestanden geselecteerd zijn
         st.session_state.fit_df = pd.DataFrame()
         st.session_state.fit_dfs_list = []
         st.info("Upload een of meerdere .fit bestanden met je sportactiviteiten om het dashboard te genereren.")
-
 
 # --- Hoofd Dashboard Content ---
 st.title("🚴‍♂️ FIT Bestand Analyse Dashboard")
@@ -235,56 +176,167 @@ st.markdown("Upload één of meerdere .fit-bestanden om je activiteit(en) te vis
 if st.session_state.get('fit_df', pd.DataFrame()).empty:
     st.info("Upload een of meerdere .fit-bestanden in de zijbalk om je sportactiviteit(en) te analyseren. Deze app is specifiek voor .fit-bestanden.")
 else:
-    df = st.session_state.fit_df
+    df = st.session_state.fit_df # Dit DataFrame bevat nu alle gecombineerde data
 
-    # --- Tabs ---
-    tab_map, tab_table, tab_raw_data = st.tabs(["🗺️ Activiteit Route", "📋 Overzicht Tabel", "📋 Ruwe Data"])
+    # --- Algemene KPI's ---
+    st.subheader("Overzicht van de Activiteiten")
+
+    # Bereken KPI's over ALLE activiteiten in het gecombineerde DataFrame
+    num_activities = df['Activity_ID'].nunique()
+
+    # Totale afstand van de langste activiteit OF de som van alle afstanden (kies degene die je wilt)
+    # Hier is de som van de max afstanden per activiteit:
+    total_distance_combined_km = df.groupby('Activity_ID')['Afstand_km'].max().sum() if 'Afstand_km' in df.columns else 0
+
+    # Som van de duur van elke activiteit
+    total_duration_seconds_combined = df.groupby('Activity_ID')['Tijd_sec'].max().sum() if 'Tijd_sec' in df.columns else 0
+
+    # Gemiddelde hartslag over alle activiteiten (gemiddelde van de gemiddelden per activiteit)
+    avg_heart_rate_combined = df.groupby('Activity_ID')['Hartslag_bpm'].mean().mean() if 'Hartslag_bpm' in df.columns else 0
+
+    # Max hartslag over alle activiteiten (maximum van alle geregistreerde hartslagen)
+    max_heart_rate_overall = df['Hartslag_bpm'].max() if 'Hartslag_bpm' in df.columns else 0
+
+    # Deze KPI's komen nu direct uit de sessie-data die we aan de DF hebben toegevoegd
+    total_calories_combined = df['Totale_Calorieën'].sum() if 'Totale_Calorieën' in df.columns else 0
+    max_speed_kmh_combined_from_session = df['Max_Snelheid_Activiteit'].max() if 'Max_Snelheid_Activiteit' in df.columns else 0
+    total_elevation_gain_combined = df['Totale_Stijging_Meters'].sum() if 'Totale_Stijging_Meters' in df.columns else 0
+
+
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+
+    with kpi1:
+        st.metric(label="Aantal Activiteiten", value=num_activities)
+    with kpi2:
+        st.metric(label="Totale Afstand (gecombineerd)", value=f"{total_distance_combined_km:,.2f} km")
+    with kpi3:
+        st.metric(label="Totale Duur (gecombineerd)", value=format_duration(total_duration_seconds_combined))
+    with kpi4:
+        st.metric(label="Gem. Hartslag (gecombineerd)", value=f"{avg_heart_rate_combined:,.0f} bpm" if avg_heart_rate_combined > 0 and not pd.isna(avg_heart_rate_combined) else "N/B")
+
+    kpi5, kpi6, kpi7 = st.columns(3)
+    with kpi5:
+        st.metric(label="Totaal Calorieën (gecombineerd)", value=f"{total_calories_combined:,.0f} kcal" if total_calories_combined > 0 else "N/B")
+    with kpi6:
+        st.metric(label="Max. Hartslag (over alle)", value=f"{max_heart_rate_overall:,.0f} bpm" if max_heart_rate_overall > 0 else "N/B")
+    with kpi7:
+        st.metric(label="Totale Stijging (gecombineerd)", value=f"{total_elevation_gain_combined:,.0f} m" if total_elevation_gain_combined > 0 else "N/B")
+
+    st.markdown("---")
+
+    tab_performance, tab_map, tab_table, tab_raw_data = st.tabs(["📊 Prestaties over Tijd", "🗺️ Activiteit Route", "📋 Overzicht Tabel", "📋 Ruwe Data"])
+
+    with tab_performance:
+        st.subheader("Prestaties over Tijd (per activiteit)")
+        # Voeg een selector toe om specifieke activiteiten te kiezen voor de tijdreeksgrafieken
+        activity_selection_for_plots = st.selectbox(
+            "Selecteer activiteit voor tijdreeksgrafieken:",
+            options=['Alle Activiteiten (overlay)'] + sorted(list(df['Activity_ID'].unique())), # Optie om alles te overlayen, gesorteerd
+            key="activity_plot_select"
+        )
+        plot_df = df.copy()
+        if activity_selection_for_plots != 'Alle Activiteiten (overlay)':
+            plot_df = df[df['Activity_ID'] == activity_selection_for_plots]
+
+        # Selectiebox voor de y-as (deze logica blijft hetzelfde, maar werkt nu op plot_df)
+        available_metrics = {
+            "Hartslag (bpm)": "Hartslag_bpm",
+            "Snelheid (km/u)": "Snelheid_kmh",
+            "Hoogte (m)": "Hoogte_m",
+            "Cadans (rpm/spm)": "Cadans_rpm",
+            "Vermogen (watts)": "Vermogen_watts",
+            "Afstand (km)": "Afstand_km"
+        }
+
+        plottable_metrics = {
+            label: col for label, col in available_metrics.items()
+            if col in plot_df.columns and (plot_df[col].sum() > 0 or col in ['Hoogte_m', 'Afstand_km'])
+        }
+
+        if not plottable_metrics:
+            st.warning("Niet genoeg numerieke data om grafieken te genereren.")
+        else:
+            selected_metric = st.selectbox(
+                "Selecteer een meting om te visualiseren:",
+                options=list(plottable_metrics.keys()),
+                key="metric_selection_multi" # Unieke sleutel
+            )
+
+            y_column = plottable_metrics[selected_metric]
+
+            if 'DatumTijd' in plot_df.columns and not plot_df.empty and not plot_df['DatumTijd'].empty:
+                # Voeg 'color='Activity_ID'' toe voor meerdere lijnen als 'Alle Activiteiten' is geselecteerd
+                fig = px.line(
+                    plot_df,
+                    x='DatumTijd',
+                    y=y_column,
+                    color='Activity_ID' if activity_selection_for_plots == 'Alle Activiteiten (overlay)' else None, # Kleur per activiteit
+                    title=f'{selected_metric} over Tijd' + (f' voor {activity_selection_for_plots}' if activity_selection_for_plots != 'Alle Activiteiten (overlay)' else ''),
+                    labels={'DatumTijd': 'Tijd', y_column: selected_metric, 'Activity_ID': 'Activiteit'},
+                    template="plotly_dark",
+                    line_shape='spline'
+                )
+                fig.update_xaxes(rangeslider_visible=True, rangeselector=dict(
+                    buttons=list([
+                        dict(count=1, label="1m", step="minute", stepmode="backward"),
+                        dict(count=5, label="5m", step="minute", stepmode="backward"),
+                        dict(count=1, label="1u", step="hour", stepmode="backward"),
+                        dict(step="all")
+                    ])
+                ))
+                fig.update_layout(hovermode="x unified")
+                st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': True})
+            else:
+                st.error("Kan geen tijdreeksgrafieken genereren, 'DatumTijd' kolom ontbreekt of is leeg na verwerking voor de geselecteerde activiteit(en).")
 
     with tab_map:
         st.subheader("Activiteiten Routes op Kaart")
         if 'Latitude' in df.columns and 'Longitude' in df.columns and df['Latitude'].notna().any() and df['Longitude'].notna().any():
+            # Filter rijen met geldige GPS-coördinaten
             df_map = df.dropna(subset=['Latitude', 'Longitude']).copy()
 
             if not df_map.empty:
+                # Gemiddelde positie om de kaart te centreren
                 center_lat = df_map['Latitude'].mean()
                 center_lon = df_map['Longitude'].mean()
 
+                # Maak de kaart
                 fig_map = px.line_mapbox(
                     df_map,
                     lat="Latitude",
                     lon="Longitude",
-                    color="Activity_ID",
-                    zoom=10,
-                    height=700,
+                    color="Activity_ID", # Kleurt de lijnen per Activity_ID
+                    zoom=12,
+                    height=1100, # Aangepaste hoogte voor betere visualisatie
                     mapbox_style="open-street-map",
                     title="Afgelegde Routes",
-                    hover_name="Activity_ID",
-                    hover_data={'DatumTijd': True, 'Afstand_km': ':.2f', 'Hartslag_bpm': True, 'Activity_ID': False}
+                    hover_name="Activity_ID", # Toon Activity_ID bij hover
+                    hover_data={'DatumTijd': True, 'Afstand_km': ':.2f', 'Hartslag_bpm': True, 'Activity_ID': False}                    
                 )
 
-                fig_map.update_traces(line=dict(width=3))
+                fig_map.update_traces(line=dict(width=5)) # <-- NIEUWE REGEL HIER
 
-
+                # Optioneel: Voeg start- en eindpunten toe voor ELKE activiteit
                 for activity_id in df_map['Activity_ID'].unique():
                     activity_df = df_map[df_map['Activity_ID'] == activity_id]
                     if not activity_df.empty:
+                        # Startpunt
                         fig_map.add_trace(go.Scattermapbox(
                             lat=[activity_df['Latitude'].iloc[0]],
                             lon=[activity_df['Longitude'].iloc[0]],
                             mode='markers',
                             marker=go.scattermapbox.Marker(size=10, color='green', symbol='circle'),
-                            name=f'Start: {activity_id}',
-                            hoverinfo='name',
-                            showlegend=False
+                            name=f'Start: {activity_id}', # Naam voor de legenda
+                            hoverinfo='name'
                         ))
+                        # Eindpunt
                         fig_map.add_trace(go.Scattermapbox(
                             lat=[activity_df['Latitude'].iloc[-1]],
                             lon=[activity_df['Longitude'].iloc[-1]],
                             mode='markers',
                             marker=go.scattermapbox.Marker(size=10, color='red', symbol='circle'),
-                            name=f'Eind: {activity_id}',
-                            hoverinfo='name',
-                            showlegend=False
+                            name=f'Eind: {activity_id}', # Naam voor de legenda
+                            hoverinfo='name'
                         ))
 
                 fig_map.update_layout(mapbox_center={"lat": center_lat, "lon": center_lon})
@@ -294,66 +346,78 @@ else:
         else:
             st.info("Geen GPS-coördinaten (Latitude/Longitude) beschikbaar in de geüploade FIT-bestanden om de routes te tonen.")
 
-    with tab_table:
-        st.subheader("Overzicht van Alle Activiteiten")
 
-        if not df.empty:
-            summary_df = df.groupby('Activity_ID').agg(
-                Datum=('DatumTijd', lambda x: x.min().strftime('%Y-%m-%d') if not x.empty else 'N/B'),
-                Totale_Afstand_km=('Afstand_km', 'max'),
-                Totale_Duur_Sec=('Totale_Tijd_in_Beweging_Activiteit_Sec', 'first'),
-                Gemiddelde_Hartslag=('Hartslag_bpm', lambda x: x[x > 0].mean() if not x.empty else 0),
-                Maximale_Hartslag=('Hartslag_bpm', 'max'),
-                Activiteitstype=('Activiteitstype', 'first')
-            ).reset_index()
+with tab_table:
+    st.subheader("Overzicht van Alle Activiteiten")
 
-            summary_df['Gemiddelde_Snelheid_kmh'] = summary_df.apply(
-                lambda row: (row['Totale_Afstand_km'] / (row['Totale_Duur_Sec'] / 3600)) if row['Totale_Duur_Sec'] > 0 else 0,
-                axis=1
-            )
+    if not df.empty:
+        # Aggregeer de data per activiteit voor de tabel
+        # We groeperen op Activity_ID en berekenen de gewenste statistieken
+        summary_df = df.groupby('Activity_ID').agg(
+            # Datum: De startdatum van de activiteit
+            Datum=('DatumTijd', lambda x: x.min().strftime('%Y-%m-%d') if not x.empty else 'N/B'),
+            # Totale afstand (max van de cumulatieve afstand in Afstand_km)
+            Totale_Afstand_km=('Afstand_km', 'max'),
+            # Gemiddelde snelheid per uur (gemiddelde van de snelheden in km/u)
+            Gemiddelde_Snelheid_kmh=('Snelheid_kmh', lambda x: x[x > 0].mean() if not x.empty else 0),
+            # Gemiddelde hartslag
+            Gemiddelde_Hartslag=('Hartslag_bpm', lambda x: x[x > 0].mean() if not x.empty else 0),
+            # Maximale hartslag
+            Maximale_Hartslag=('Hartslag_bpm', 'max'),
+            # Totale duur (max van de cumulatieve tijd in Tijd_sec)
+            Totale_Duur_sec=('Tijd_sec', 'max'),
+            # Activiteitstype
+            Activiteitstype=('Activiteitstype', 'first')
+        ).reset_index()
 
-            summary_df['Totale_Duur'] = summary_df['Totale_Duur_Sec'].apply(format_duration)
+        # Formatteer de Totale_Duur_sec naar HH:MM:SS
+        summary_df['Totale_Duur'] = summary_df['Totale_Duur_sec'].apply(format_duration)
 
-            summary_df['Totale_Afstand_km'] = summary_df['Totale_Afstand_km'].round(2)
-            summary_df['Gemiddelde_Snelheid_kmh'] = summary_df['Gemiddelde_Snelheid_kmh'].round(1)
-            summary_df['Gemiddelde_Hartslag'] = summary_df['Gemiddelde_Hartslag'].round(0).astype('Int64')
-            summary_df['Maximale_Hartslag'] = summary_df['Maximale_Hartslag'].round(0).astype('Int64')
+        # Rond de numerieke kolommen af en zorg voor goede weergave
+        summary_df['Totale_Afstand_km'] = summary_df['Totale_Afstand_km'].round(2)
+        summary_df['Gemiddelde_Snelheid_kmh'] = summary_df['Gemiddelde_Snelheid_kmh'].round(1)
+        summary_df['Gemiddelde_Hartslag'] = summary_df['Gemiddelde_Hartslag'].round(0).astype('Int64') # Int64 voor NaN support
+        summary_df['Maximale_Hartslag'] = summary_df['Maximale_Hartslag'].round(0).astype('Int64')
 
-            display_columns = [
-                'Bestandsnaam',
-                'Datum',
-                'Activiteitstype',
-                'Afstand (km)',
-                'Duur (UU:MM:SS)',
-                'Gem. Snelheid (km/u)',
-                'Gem. Hartslag (bpm)',
-                'Max. Hartslag (bpm)'
-            ]
+        # Selecteer en herordenen de kolommen voor de weergave
+        display_columns = [
+            'Activity_ID',
+            'Datum',
+            'Activiteitstype',
+            'Totale_Afstand_km',
+            'Totale_Duur',
+            'Gemiddelde_Snelheid_kmh',
+            'Gemiddelde_Hartslag',
+            'Maximale_Hartslag'
+        ]
+        summary_df = summary_df[display_columns].copy()
 
-            summary_df = summary_df.rename(columns={
-                'Activity_ID': 'Bestandsnaam',
-                'Totale_Afstand_km': 'Afstand (km)',
-                'Gemiddelde_Snelheid_kmh': 'Gem. Snelheid (km/u)',
-                'Gemiddelde_Hartslag': 'Gem. Hartslag (bpm)',
-                'Maximale_Hartslag': 'Max. Hartslag (bpm)',
-                'Totale_Duur': 'Duur (UU:MM:SS)'
-            })[display_columns].copy()
+        # Hernoem kolommen voor een mooiere weergave in de tabel
+        summary_df.rename(columns={
+            'Activity_ID': 'Bestandsnaam',
+            'Totale_Afstand_km': 'Afstand (km)',
+            'Gemiddelde_Snelheid_kmh': 'Gem. Snelheid (km/u)',
+            'Gemiddelde_Hartslag': 'Gem. Hartslag (bpm)',
+            'Maximale_Hartslag': 'Max. Hartslag (bpm)',
+            'Totale_Duur': 'Duur (UU:MM:SS)'
+        }, inplace=True)
+
+        st.dataframe(summary_df, use_container_width=True)
+
+        # Optioneel: Download knop voor deze specifieke tabel
+        csv_export_summary = summary_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download overzichtstabel als CSV",
+            data=csv_export_summary,
+            file_name="fit_summary_table.csv",
+            mime="text/csv",
+        )
+
+    else:
+        st.info("Geen activiteiten geladen om een overzichtstabel te tonen.")
 
 
-            st.dataframe(summary_df, use_container_width=True)
-
-            csv_export_summary = summary_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="Download overzichtstabel als CSV",
-                data=csv_export_summary,
-                file_name="fit_summary_table.csv",
-                mime="text/csv",
-            )
-
-        else:
-            st.info("Geen activiteiten geladen om een overzichtstabel te tonen.")
-
-    with tab_raw_data:
+    with tab_raw_data: # Ruwe Data tab
         st.header("Ruwe Gegevens")
         st.markdown("Hier kun je de verwerkte ruwe data van alle activiteiten bekijken en eventueel exporteren.")
         if not st.session_state.fit_df.empty:
