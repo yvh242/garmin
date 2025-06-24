@@ -117,36 +117,35 @@ def parse_fit_file(file_bytes, activity_id, speed_threshold_kmh): # <-- NIEUW: s
         df['Totale_Duur_Timer_Sec'] = session_total_timer_time # <-- NIEUW: Voeg toe aan DataFrame
 
         # --- Bereken 'Tijd in Beweging' ---
-        total_moving_time_for_activity = 0 # Initialiseer met 0
+        calculated_moving_time = 0 # Initialiseer met 0
 
-        # Controleer of we voldoende gegevens hebben om tijd in beweging te berekenen
-        # en of de snelheidsdata niet allemaal nul zijn (wat kan gebeuren bij stationaire activiteiten)
-        if 'Snelheid_kmh' in df.columns and 'DatumTijd' in df.columns and not df.empty and \
-           df['Snelheid_kmh'].dropna().any(): # Controleer of er ten minste één niet-nul snelheid is
-            
-            df['Snelheid_kmh'] = df['Snelheid_kmh'].fillna(0)
-            df['DatumTijd'] = df['DatumTijd'].fillna(method='ffill').fillna(method='bfill')
+        # Eerste poging: Gebruik de 'total_timer_time' uit het sessiebericht als die beschikbaar is en > 0
+        if session_total_timer_time > 0:
+            calculated_moving_time = session_total_timer_time
+        
+        # Tweede poging: Als total_timer_time niet bruikbaar was, bereken dan op basis van snelheid
+        if calculated_moving_time == 0: # Alleen proberen als de timer_time 0 was of niet aanwezig
+            if 'Snelheid_kmh' in df.columns and 'DatumTijd' in df.columns and not df.empty and \
+               df['Snelheid_kmh'].dropna().any(): # Controleer of er ten minste één niet-nul snelheid is
+                
+                df['Snelheid_kmh'] = df['Snelheid_kmh'].fillna(0)
+                df['DatumTijd'] = df['DatumTijd'].fillna(method='ffill').fillna(method='bfill')
 
-            # Hercontroleer op leegte na opvulling en als DatumTijd geen geldige tijdreeks is
-            if not df['DatumTijd'].empty and df['DatumTijd'].diff().dt.total_seconds().sum() > 0:
-                df['Is_Moving'] = df['Snelheid_kmh'] > speed_threshold_kmh # <-- Gebruik de parameter
-                df['Time_Diff_Sec'] = df['DatumTijd'].diff().dt.total_seconds().fillna(0)
+                if not df['DatumTijd'].empty and df['DatumTijd'].diff().dt.total_seconds().sum() > 0:
+                    df['Is_Moving'] = df['Snelheid_kmh'] > speed_threshold_kmh
+                    df['Time_Diff_Sec'] = df['DatumTijd'].diff().dt.total_seconds().fillna(0)
 
-                df['Moving_Time_Contribution_Sec'] = df.apply(
-                    lambda row: row['Time_Diff_Sec'] if row['Is_Moving'] else 0, axis=1
-                )
-                total_moving_time_for_activity = df['Moving_Time_Contribution_Sec'].sum()
-
-        # Fallback logica:
-        # 1. Als de berekende moving time 0 is (of er geen snelheidsdata was), probeer total_timer_time uit sessiebericht
-        # 2. Als dat ook 0 is, gebruik dan de totale verstreken tijd (elapsed time)
-        if total_moving_time_for_activity == 0 and session_total_timer_time > 0:
-            total_moving_time_for_activity = session_total_timer_time
-        elif total_moving_time_for_activity == 0 and 'Tijd_sec' in df.columns and not df['Tijd_sec'].empty:
-             total_moving_time_for_activity = df['Tijd_sec'].max()
+                    df['Moving_Time_Contribution_Sec'] = df.apply(
+                        lambda row: row['Time_Diff_Sec'] if row['Is_Moving'] else 0, axis=1
+                    )
+                    calculated_moving_time = df['Moving_Time_Contribution_Sec'].sum()
+        
+        # Derde poging (fallback): Als alles hierboven 0 opleverde, gebruik dan de totale verstreken tijd (elapsed time)
+        if calculated_moving_time == 0 and 'Tijd_sec' in df.columns and not df['Tijd_sec'].empty:
+             calculated_moving_time = df['Tijd_sec'].max()
 
         # Voeg de berekende totale tijd in beweging toe aan elke rij voor deze activiteit
-        df['Totale_Tijd_in_Beweging_Activiteit_Sec'] = total_moving_time_for_activity
+        df['Totale_Tijd_in_Beweging_Activiteit_Sec'] = calculated_moving_time
 
         return df
 
@@ -170,7 +169,7 @@ with st.sidebar:
         max_value=5.0,
         value=0.5, # Standaardwaarde
         step=0.1,
-        help="Snelheid (in km/u) waaronder activiteit als stilstand wordt beschouwd."
+        help="Snelheid (in km/u) waaronder activiteit als stilstand wordt beschouwd. Alleen van toepassing als 'total_timer_time' niet beschikbaar is."
     )
     st.markdown("---")
 
