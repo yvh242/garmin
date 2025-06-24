@@ -221,6 +221,7 @@ else:
             else:
                 st.error("Kan geen tijdreeksgrafieken genereren, 'DatumTijd' kolom ontbreekt of is leeg na verwerking.")
 
+
     with tab_map:
         st.subheader("Activiteit Route op Kaart")
         if 'Latitude' in df.columns and 'Longitude' in df.columns and df['Latitude'].notna().any() and df['Longitude'].notna().any():
@@ -239,7 +240,7 @@ else:
                     lon="Longitude",
                     zoom=12, # Start zoomniveau
                     height=500,
-                    mapbox_style="carto-positron", # Of "open-street-map", "stamen-terrain", etc.
+                    mapbox_style="open-street-map", # <-- Aangepast naar "open-street-map"
                     title="Afgelegde Route",
                     hover_name="DatumTijd",
                     color_discrete_sequence=["#FF4B4B"] # Kleur van de lijn
@@ -264,7 +265,9 @@ else:
                 ))
 
                 fig_map.update_layout(mapbox_center={"lat": center_lat, "lon": center_lon})
-                st.plotly_chart(fig_map, use_container_width=True)
+
+                # BELANGRIJK: Voeg de 'config' parameter toe om de modusbar te tonen
+                st.plotly_chart(fig_map, use_container_width=True, config={'displayModeBar': True}) # <-- Aangepast hier
             else:
                 st.info("Geen geldige GPS-coördinaten gevonden in het bestand om de route te tonen.")
         else:
