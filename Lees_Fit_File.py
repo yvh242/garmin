@@ -239,7 +239,7 @@ else:
                     lat="Latitude",
                     lon="Longitude",
                     zoom=12, # Start zoomniveau
-                    height=500,
+                    height=800,
                     mapbox_style="open-street-map", # <-- Aangepast naar "open-street-map"
                     title="Afgelegde Route",
                     hover_name="DatumTijd",
