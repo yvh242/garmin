@@ -24,7 +24,6 @@ def load_and_process_data(uploaded_file):
         return None
 
     # Kolomnamen opschonen: spaties verwijderen, speciale tekens vervangen
-    # Dit wordt gedaan op *alle* kolommen om consistentie te garanderen
     df.columns = df.columns.str.strip().str.replace('Â®', '', regex=False).str.replace('\xa0', '', regex=False)
 
     # Definieer een mapping van verwachte Nederlandse kolomnamen naar interne, schone namen
@@ -35,78 +34,61 @@ def load_and_process_data(uploaded_file):
         "Titel": "title",
         "Afstand": "distance_km",
         "Calorieën": "calories_kcal",
-        "Tijd": "duration_raw", # Dit is de string HH:MM:SS
+        "Tijd": "duration_raw",
         "Gem. HS": "avg_heart_rate_bpm",
         "Max. HS": "max_heart_rate_bpm",
         "Gem. cadans": "avg_cadence",
         "Maximale cadans": "max_cadence",
-        "Gemiddeld tempo": "avg_pace_raw", # Dit is de string MM:SS
-        "Beste tempo": "best_pace_raw", # Dit is de string MM:SS
+        "Gemiddeld tempo": "avg_pace_raw",
+        "Beste tempo": "best_pace_raw",
         "Totale stijging": "total_elevation_gain_m",
         "Totale daling": "total_elevation_loss_m",
         "Gem. staplengte": "avg_stride_length_cm",
-        "Training Stress Score": "tss", # Na opschonen van ®
+        "Training Stress Score": "tss",
         "Stappen": "steps",
         "Min. temp.": "min_temp_celsius",
         "Decompressie": "decompression",
-        "Beste": "best_overall", # Na opschonen van spatie
+        "Beste": "best_overall",
     }
 
     # Hernoem kolommen op basis van de mapping
     df.rename(columns=column_mapping, inplace=True)
 
-    # --- Zorg ervoor dat alle benodigde kolommen bestaan en correct geconverteerd zijn ---
-    # Voeg kolommen toe met standaardwaarden indien ze niet bestaan
-    # Dit voorkomt KeyErrors en zorgt ervoor dat de app niet crasht.
-
-    # Date kolom
+    # Controleer en converteer essentiële kolommen
     if 'date' in df.columns:
         df['date'] = pd.to_datetime(df['date'], errors='coerce')
-        df.dropna(subset=['date'], inplace=True) # Verwijder rijen met ongeldige datums
+        df.dropna(subset=['date'], inplace=True)
     else:
-        st.warning("De 'Datum' kolom is niet gevonden. Datum-gerelateerde analyses werken mogelijk niet.")
-        df['date'] = pd.NaT # Not a Time
+        st.warning("De 'Datum' kolom is niet gevonden. Sommige functionaliteiten werken mogelijk niet correct.")
+        df['date'] = pd.NaT # Voeg kolom toe met Not a Time
 
-    # Numeric/Float kolommen, vul NaN met 0
-    numeric_cols = {
-        'distance_km': 0.0,
-        'calories_kcal': 0.0,
-        'steps': 0.0,
-        'avg_heart_rate_bpm': 0.0,
-        'max_heart_rate_bpm': 0.0,
-        'avg_cadence': 0.0,
-        'max_cadence': 0.0,
-        'total_elevation_gain_m': 0.0,
-        'total_elevation_loss_m': 0.0,
-        'avg_stride_length_cm': 0.0,
-        'tss': 0.0,
-        'min_temp_celsius': 0.0,
-    }
-    for col, default_val in numeric_cols.items():
-        if col in df.columns:
-            # Vervang komma's door punten voor float conversie
-            if df[col].dtype == 'object':
-                df[col] = df[col].astype(str).str.replace(',', '.', regex=False)
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(default_val)
-        else:
-            if col != 'duration_raw' and col != 'avg_pace_raw' and col != 'best_pace_raw': # Deze worden anders afgehandeld
-                st.warning(f"De kolom '{col}' is niet gevonden. Data hiervoor zal 0 zijn.")
-                df[col] = default_val
+    if 'distance_km' in df.columns:
+        df['distance_km'] = df['distance_km'].astype(str).str.replace(',', '.', regex=False).astype(float).fillna(0)
+    else:
+        st.warning("De 'Afstand' kolom is niet gevonden. Afstandsberekeningen zijn niet mogelijk.")
+        df['distance_km'] = 0.0
 
-    # String kolommen, vul NaN met 'Onbekend'
-    string_cols = {
-        'activity_type': 'Onbekend',
-        'favorite': 'Onbekend',
-        'title': 'Geen Titel',
-        'decompression': 'Onbekend',
-        'best_overall': 'Onbekend',
-    }
-    for col, default_val in string_cols.items():
-        if col not in df.columns:
-            st.warning(f"De kolom '{col}' is niet gevonden. Data hiervoor zal '{default_val}' zijn.")
-            df[col] = default_val
-        else:
-            df[col] = df[col].fillna(default_val) # Vul ook bestaande NaN's op
+    if 'calories_kcal' in df.columns:
+        df['calories_kcal'] = pd.to_numeric(df['calories_kcal'], errors='coerce').fillna(0)
+    else:
+        st.warning("De 'Calorieën' kolom is niet gevonden. Calorieberekeningen zijn niet mogelijk.")
+        df['calories_kcal'] = 0.0
+
+    if 'steps' in df.columns:
+        df['steps'] = pd.to_numeric(df['steps'], errors='coerce').fillna(0)
+    else:
+        st.warning("De 'Stappen' kolom is niet gevonden. Stappenberekeningen zijn niet mogelijk.")
+        df['steps'] = 0.0
+
+    if 'avg_heart_rate_bpm' in df.columns:
+        df['avg_heart_rate_bpm'] = pd.to_numeric(df['avg_heart_rate_bpm'], errors='coerce').fillna(0)
+    else:
+        st.warning("De 'Gem. HS' kolom is niet gevonden. Hartslag analyses zijn niet mogelijk.")
+        df['avg_heart_rate_bpm'] = 0.0
+
+    if 'activity_type' not in df.columns:
+        st.warning("De 'Activiteittype' kolom is niet gevonden. Analyses per activiteitstype zijn beperkt.")
+        df['activity_type'] = 'Onbekend'
 
     # Tijd conversie: van HH:MM:SS string naar seconden
     def parse_time_to_seconds(time_str):
@@ -114,14 +96,14 @@ def load_and_process_data(uploaded_file):
         try:
             parts = str(time_str).split(':')
             if len(parts) == 3: return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-            elif len(parts) == 2: return int(parts[0]) * 60 + int(parts[1]) # Kan voorkomen bij tempo format (MM:SS)
-            else: return float(time_str) # Voor het geval het al een nummer is
+            elif len(parts) == 2: return int(parts[0]) * 60 + int(parts[1])
+            else: return float(time_str)
         except (ValueError, TypeError): return 0
 
     if 'duration_raw' in df.columns:
         df['duration_seconds'] = df['duration_raw'].apply(parse_time_to_seconds)
     else:
-        st.warning("De 'Tijd' kolom (duur) is niet gevonden. Duur analyses zijn niet mogelijk.")
+        st.warning("De 'Tijd' kolom is niet gevonden. Duur analyses zijn niet mogelijk.")
         df['duration_seconds'] = 0.0
 
     # Tempo conversie: van MM:SS string naar seconden per eenheid
@@ -136,23 +118,19 @@ def load_and_process_data(uploaded_file):
     if 'avg_pace_raw' in df.columns:
         df['avg_pace_sec_per_km'] = df['avg_pace_raw'].apply(parse_pace_to_seconds_per_unit)
     else:
-        st.warning("De 'Gemiddeld tempo' kolom is niet gevonden.")
         df['avg_pace_sec_per_km'] = 0.0
 
     if 'best_pace_raw' in df.columns:
         df['best_pace_sec_per_km'] = df['best_pace_raw'].apply(parse_pace_to_seconds_per_unit)
     else:
-        st.warning("De 'Beste tempo' kolom is niet gevonden.")
         df['best_pace_sec_per_km'] = 0.0
 
-    # Voeg week- en maandkolommen toe voor aggregatie als de 'date' kolom geldig is
-    if not df['date'].empty and df['date'].notna().any():
+    # Voeg week- en maandkolommen toe voor aggregatie
+    if 'date' in df.columns and not df['date'].empty and df['date'].notna().any():
         df['year_week'] = df['date'].dt.strftime('%Y-%W')
         df['year_month'] = df['date'].dt.strftime('%Y-%m')
-        # Bepaal het begin van de week voor elke datum, handig voor x-as in grafieken
         df['date_week_start'] = df['date'].apply(lambda x: x - timedelta(days=x.weekday()))
     else:
-        st.warning("Geen geldige datums gevonden na verwerking. Tijd-gebaseerde aggregaties zijn beperkt.")
         df['year_week'] = 'Onbekend'
         df['year_month'] = 'Onbekend'
         df['date_week_start'] = pd.NaT
@@ -177,8 +155,8 @@ with st.sidebar:
 
     uploaded_file = st.file_uploader("Kies een bestand", type=["csv", "xlsx"])
 
-    df_full = None # DataFrame voor de volledige dataset
-    filtered_df = pd.DataFrame() # Initialiseer filtered_df als leeg dataframe
+    df_full = None
+    filtered_df = pd.DataFrame()
 
     if uploaded_file is not None:
         df_full = load_and_process_data(uploaded_file)
@@ -188,17 +166,13 @@ with st.sidebar:
 
             # Datum filter
             st.header("Filter op datum")
-            # Zorg ervoor dat de datums binnen het bereik van de data liggen
-            # Check for NaT values before min()/max()
             valid_dates = df_full['date'].dropna()
             if not valid_dates.empty:
                 min_date_data = valid_dates.min().date()
                 max_date_data = valid_dates.max().date()
             else:
-                st.warning("Geen geldige datums gevonden in het bestand. Datumfilter is uitgeschakeld.")
                 min_date_data = datetime.now().date() - timedelta(days=30)
                 max_date_data = datetime.now().date()
-
 
             col_start_date, col_end_date = st.columns(2)
             with col_start_date:
@@ -208,21 +182,18 @@ with st.sidebar:
 
             if start_date > end_date:
                 st.error("Fout: De 'Tot' datum moet na of gelijk zijn aan de 'Vanaf' datum.")
-                filtered_df = pd.DataFrame() # Leeg dataframe om fouten te voorkomen
+                filtered_df = pd.DataFrame()
             else:
-                # Filter alleen op rijen waar de datum geldig is
-                filtered_df = df_full[
-                    df_full['date'].notna() & # Zorg ervoor dat de datum geen NaT is
-                    (df_full['date'].dt.date >= start_date) &
-                    (df_full['date'].dt.date <= end_date)
-                ].copy() # .copy() om SettingWithCopyWarning te voorkomen
+                filtered_df = df_full[(df_full['date'].dt.date >= start_date) & (df_full['date'].dt.date <= end_date)].copy()
+
+            # Sla de geselecteerde datums op in session_state voor gebruik in tabs
+            st.session_state.start_date_filter = start_date
+            st.session_state.end_date_filter = end_date
 
             # Activiteittype filter
             st.header("Filter op Activiteittype")
             if 'activity_type' in filtered_df.columns and not filtered_df.empty:
-                # Zorg ervoor dat er geen lege strings of NaN's in unique() komen
-                unique_activities = filtered_df['activity_type'].dropna().unique().tolist()
-                all_activity_types = ['Alle'] + sorted(unique_activities)
+                all_activity_types = ['Alle'] + sorted(filtered_df['activity_type'].dropna().unique().tolist())
                 selected_activity_types = st.multiselect(
                     "Selecteer activiteittypen",
                     options=all_activity_types,
@@ -236,8 +207,6 @@ with st.sidebar:
 
             if filtered_df.empty and df_full is not None:
                 st.warning("Geen gegevens beschikbaar voor de geselecteerde filters. Pas de filters aan.")
-        else:
-            st.info("Upload een Excel- of CSV-bestand met je sportactiviteiten om het dashboard te genereren. Zorg ervoor dat de kolomnamen correct zijn.")
     else:
         st.info("Upload een Excel- of CSV-bestand met je sportactiviteiten om het dashboard te genereren. Zorg ervoor dat de kolomnamen correct zijn.")
 
@@ -281,7 +250,6 @@ if uploaded_file is not None and not filtered_df.empty:
 
         col_dist_time, col_dur_time = st.columns(2)
 
-        # Controleer of de benodigde kolommen bestaan en data bevatten
         if 'date' in filtered_df.columns and 'distance_km' in filtered_df.columns and filtered_df['date'].notna().any():
             with col_dist_time:
                 st.subheader("Afstand over tijd")
@@ -312,7 +280,7 @@ if uploaded_file is not None and not filtered_df.empty:
                     title='Totale Duur per Dag',
                     labels={'duration_seconds': 'Duur (seconden)', 'date': 'Datum'},
                     template="plotly_dark",
-                    hover_data={'duration_seconds':False, 'Tijd (HH:MM:SS)':True} # Toon geformatteerde duur
+                    hover_data={'duration_seconds':False, 'Tijd (HH:MM:SS)':True}
                 )
                 fig_duration_time.update_traces(mode='lines+markers', marker_size=5)
                 st.plotly_chart(fig_duration_time, use_container_width=True)
@@ -330,7 +298,6 @@ if uploaded_file is not None and not filtered_df.empty:
         if 'avg_pace_sec_per_km' in filtered_df.columns and 'activity_type' in filtered_df.columns:
             with col_pace:
                 st.subheader("Gemiddeld Tempo per Activiteit")
-                # Filter rijen waar avg_pace_sec_per_km 0 is als dit niet representatief is
                 df_pace_filtered = filtered_df[filtered_df['avg_pace_sec_per_km'] > 0]
                 if not df_pace_filtered.empty:
                     df_pace_filtered['Gemiddeld tempo Display'] = df_pace_filtered['avg_pace_sec_per_km'].apply(lambda x: f"{int(x // 60):02d}:{int(x % 60):02d}")
@@ -371,7 +338,6 @@ if uploaded_file is not None and not filtered_df.empty:
             with col_hr:
                 st.info("Hartslag data niet beschikbaar voor analyse.")
 
-
         st.subheader("Afstand vs. Hartslag per Activiteit")
         if ('distance_km' in filtered_df.columns and 'avg_heart_rate_bpm' in filtered_df.columns and
             filtered_df['distance_km'].sum() > 0 and filtered_df['avg_heart_rate_bpm'].sum() > 0):
@@ -380,7 +346,7 @@ if uploaded_file is not None and not filtered_df.empty:
                 x='distance_km',
                 y='avg_heart_rate_bpm',
                 color='activity_type',
-                size='duration_seconds', # Grootte van de stip gebaseerd op duur
+                size='duration_seconds',
                 hover_name='title',
                 title='Afstand vs. Gemiddelde Hartslag',
                 labels={'distance_km': 'Afstand (km)', 'avg_heart_rate_bpm': 'Gemiddelde Hartslag (bpm)'},
@@ -395,7 +361,6 @@ if uploaded_file is not None and not filtered_df.empty:
         st.header("Analyse per Activiteittype")
         st.markdown("Duik dieper in je prestaties per type activiteit.")
 
-        # Totaal afstand & Gemiddelde afstand per activiteittype
         col_total_dist_type, col_avg_dist_type = st.columns(2)
 
         if 'distance_km' in filtered_df.columns and 'activity_type' in filtered_df.columns and filtered_df['distance_km'].sum() > 0:
@@ -431,7 +396,6 @@ if uploaded_file is not None and not filtered_df.empty:
         else:
             st.info("Afstand data ontbreekt voor deze analyse.")
 
-        # Calorieën en Stappen per activiteittype
         col_calories_type, col_steps_type = st.columns(2)
 
         if 'calories_kcal' in filtered_df.columns and 'activity_type' in filtered_df.columns and filtered_df['calories_kcal'].sum() > 0:
@@ -445,7 +409,7 @@ if uploaded_file is not None and not filtered_df.empty:
                     names='activity_type',
                     title='Verdeling Calorieën per Activiteittype',
                     template="plotly_dark",
-                    hole=0.4 # Maak er een donut chart van
+                    hole=0.4
                 )
                 st.plotly_chart(fig_calories_type, use_container_width=True)
         else:
@@ -472,85 +436,99 @@ if uploaded_file is not None and not filtered_df.empty:
                 st.info("Stappen data ontbreekt voor deze analyse.")
 
 
-    with tab4: # Nieuw tabblad voor vergelijking per week/maand
+    with tab4:
         st.header("Vergelijking van Afstand en Duur")
-        st.markdown("Bekijk je **gemiddelde** afstand en duur geaggregeerd.")
+        st.markdown("Bekijk je **gemiddelde** afstand en duur geaggregeerd per week of per maand, afhankelijk van de geselecteerde periode.")
 
-        # Keuzemenu voor week of maand
-        aggregation_period = st.radio(
-            "Kies aggregatieperiode:",
-            ('Per Week', 'Per Maand'),
-            horizontal=True,
-            key='agg_period_radio' # Voeg een unieke key toe
-        )
-        st.markdown(f"**Toont gemiddelde waarden {aggregation_period.lower()}**")
+        start_date_filter = st.session_state.get('start_date_filter')
+        end_date_filter = st.session_state.get('end_date_filter')
 
+        if start_date_filter and end_date_filter and not filtered_df.empty:
+            date_range_days = (end_date_filter - start_date_filter).days + 1
 
-        # Controleer of de benodigde kolommen bestaan en data bevatten
-        if (not filtered_df.empty and
-            'distance_km' in filtered_df.columns and filtered_df['distance_km'].notna().any() and
-            'duration_seconds' in filtered_df.columns and filtered_df['duration_seconds'].notna().any() and
-            'year_week' in filtered_df.columns and filtered_df['year_week'].notna().any() and
-            'year_month' in filtered_df.columns and filtered_df['year_month'].notna().any()):
+            if date_range_days <= 31: # Minder dan 32 dagen: per week
+                st.subheader("Gemiddelde Afstand en Duur per Week")
+                if 'year_week' in filtered_df.columns and 'distance_km' in filtered_df.columns and 'duration_seconds' in filtered_df.columns and filtered_df['year_week'].notna().any():
+                    df_weekly = filtered_df.groupby('year_week').agg(
+                        avg_distance=('distance_km', 'mean'),
+                        avg_duration=('duration_seconds', 'mean')
+                    ).reset_index()
+                    df_weekly.columns = ['Periode', 'Gem. Afstand (km)', 'Gem. Duur (sec)']
+                    df_weekly['Gem. Duur (HH:MM:SS)'] = df_weekly['Gem. Duur (sec)'].apply(format_duration)
 
-            if aggregation_period == 'Per Week':
-                df_agg = filtered_df.groupby('year_week').agg(
-                    avg_distance=('distance_km', 'mean'),
-                    avg_duration=('duration_seconds', 'mean')
-                ).reset_index()
-                df_agg.columns = ['Periode', 'Gem. Afstand (km)', 'Gem. Duur (sec)']
-                df_agg['Gem. Duur (HH:MM:SS)'] = df_agg['Gem. Duur (sec)'].apply(format_duration)
-                x_label = 'Jaar-Week'
+                    fig_weekly_dist = px.bar(
+                        df_weekly,
+                        x='Periode',
+                        y='Gem. Afstand (km)',
+                        title='Gemiddelde Afstand per Week',
+                        labels={'Periode': 'Jaar-Week', 'Gem. Afstand (km)': 'Gemiddelde Afstand (km)'},
+                        template="plotly_dark",
+                        color='Gem. Afstand (km)',
+                        text_auto='.2f'
+                    )
+                    fig_weekly_dist.update_traces(textposition='outside')
+                    st.plotly_chart(fig_weekly_dist, use_container_width=True)
 
-            else: # Per Maand
-                df_agg = filtered_df.groupby('year_month').agg(
-                    avg_distance=('distance_km', 'mean'),
-                    avg_duration=('duration_seconds', 'mean')
-                ).reset_index()
-                df_agg.columns = ['Periode', 'Gem. Afstand (km)', 'Gem. Duur (sec)']
-                df_agg['Gem. Duur (HH:MM:SS)'] = df_agg['Gem. Duur (sec)'].apply(format_duration)
-                x_label = 'Jaar-Maand'
+                    fig_weekly_dur = px.bar(
+                        df_weekly,
+                        x='Periode',
+                        y='Gem. Duur (sec)',
+                        title='Gemiddelde Duur per Week',
+                        labels={'Periode': 'Jaar-Week', 'Gem. Duur (sec)': 'Gemiddelde Duur (seconden)'},
+                        template="plotly_dark",
+                        color='Gem. Duur (sec)',
+                        text='Gem. Duur (HH:MM:SS)'
+                    )
+                    fig_weekly_dur.update_traces(textposition='outside')
+                    st.plotly_chart(fig_weekly_dur, use_container_width=True)
+                else:
+                    st.info("Niet genoeg data (afstand, duur, of datum) om de wekelijkse vergelijking te tonen.")
 
-            # --- Grafieken ---
-            col_agg_dist, col_agg_dur = st.columns(2)
+            else: # Meer dan 31 dagen: per maand
+                st.subheader("Gemiddelde Afstand en Duur per Maand")
+                if 'year_month' in filtered_df.columns and 'distance_km' in filtered_df.columns and 'duration_seconds' in filtered_df.columns and filtered_df['year_month'].notna().any():
+                    df_monthly = filtered_df.groupby('year_month').agg(
+                        avg_distance=('distance_km', 'mean'),
+                        avg_duration=('duration_seconds', 'mean')
+                    ).reset_index()
+                    df_monthly.columns = ['Periode', 'Gem. Afstand (km)', 'Gem. Duur (sec)']
+                    df_monthly['Gem. Duur (HH:MM:SS)'] = df_monthly['Gem. Duur (sec)'].apply(format_duration)
 
-            with col_agg_dist:
-                st.subheader(f"Gemiddelde Afstand {aggregation_period.lower()}")
-                fig_agg_dist = px.bar(
-                    df_agg,
-                    x='Periode',
-                    y='Gem. Afstand (km)',
-                    title=f'Gemiddelde Afstand {aggregation_period.lower()}',
-                    labels={'Periode': x_label, 'Gem. Afstand (km)': 'Gemiddelde Afstand (km)'},
-                    template="plotly_dark",
-                    text_auto='.2f' # Toon waarde op de balk, 2 decimalen
-                )
-                fig_agg_dist.update_traces(textposition='outside', marker_color='#FF4B4B') # Gebruik primaire kleur
-                fig_agg_dist.update_layout(showlegend=False) # Verwijder legende
-                st.plotly_chart(fig_agg_dist, use_container_width=True)
+                    fig_monthly_dist = px.bar(
+                        df_monthly,
+                        x='Periode',
+                        y='Gem. Afstand (km)',
+                        title='Gemiddelde Afstand per Maand',
+                        labels={'Periode': 'Jaar-Maand', 'Gem. Afstand (km)': 'Gemiddelde Afstand (km)'},
+                        template="plotly_dark",
+                        color='Gem. Afstand (km)',
+                        text_auto='.2f'
+                    )
+                    fig_monthly_dist.update_traces(textposition='outside')
+                    st.plotly_chart(fig_monthly_dist, use_container_width=True)
 
-            with col_agg_dur:
-                st.subheader(f"Gemiddelde Duur {aggregation_period.lower()}")
-                fig_agg_dur = px.bar(
-                    df_agg,
-                    x='Periode',
-                    y='Gem. Duur (sec)',
-                    title=f'Gemiddelde Duur {aggregation_period.lower()}',
-                    labels={'Periode': x_label, 'Gem. Duur (sec)': 'Gemiddelde Duur (seconden)'},
-                    template="plotly_dark",
-                    text='Gem. Duur (HH:MM:SS)' # Toon geformatteerde duur op de balk
-                )
-                fig_agg_dur.update_traces(textposition='outside', marker_color='#636EFA') # Gebruik een andere standaardkleur
-                fig_agg_dur.update_layout(showlegend=False) # Verwijder legende
-                st.plotly_chart(fig_agg_dur, use_container_width=True)
+                    fig_monthly_dur = px.bar(
+                        df_monthly,
+                        x='Periode',
+                        y='Gem. Duur (sec)',
+                        title='Gemiddelde Duur per Maand',
+                        labels={'Periode': 'Jaar-Maand', 'Gem. Duur (sec)': 'Gemiddelde Duur (seconden)'},
+                        template="plotly_dark",
+                        color='Gem. Duur (sec)',
+                        text='Gem. Duur (HH:MM:SS)'
+                    )
+                    fig_monthly_dur.update_traces(textposition='outside')
+                    st.plotly_chart(fig_monthly_dur, use_container_width=True)
+                else:
+                    st.info("Niet genoeg data (afstand, duur, of datum) om de maandelijkse vergelijking te tonen.")
         else:
-            st.info("Niet genoeg data (afstand, duur, of geldige datums/periodes) om de vergelijking te tonen voor de geselecteerde filters.")
+            st.info("Selecteer een periode met data in het zijmenu om de vergelijking te zien.")
 
 
     with tab5: # Ruwe Data tab
         st.header("Ruwe Gegevens")
         st.markdown("Hier kun je de gefilterde ruwe data bekijken en eventueel exporteren.")
-        st.dataframe(filtered_df) # Toon de volledige gefilterde DataFrame
+        st.dataframe(filtered_df)
 
         csv_export = filtered_df.to_csv(index=False).encode('utf-8')
         st.download_button(
