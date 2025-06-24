@@ -175,7 +175,7 @@ with st.sidebar:
             # Datum filter
             st.header("Filter op datum")
             # Zorg ervoor dat de datums binnen het bereik van de data liggen
-            if not df_full['date'].empty and pd.notna(df_full['date'].min()):
+            if 'date' in df_full.columns and not df_full['date'].empty and pd.notna(df_full['date'].min()):
                 min_date_data = df_full['date'].min().date()
                 max_date_data = df_full['date'].max().date()
             else:
@@ -216,7 +216,7 @@ with st.sidebar:
             if filtered_df.empty and df_full is not None:
                 st.warning("Geen gegevens beschikbaar voor de geselecteerde filters. Pas de filters aan.")
     else:
-        st.info("Upload een Excel- of CSV-bestand met je sportactiviteiten om het dashboard te genereren.")
+        st.info("Upload een Excel- of CSV-bestand met je sportactiviteiten om het dashboard te genereren. Zorg ervoor dat de kolomnamen correct zijn.")
 
 # --- Hoofd Dashboard Content ---
 st.title("🏃‍♂️ Je Persoonlijke Sportactiviteiten Dashboard")
@@ -432,7 +432,7 @@ if uploaded_file is not None and not filtered_df.empty:
 
     with tab4: # Nieuw tabblad voor vergelijking per week/maand
         st.header("Vergelijking van Afstand en Duur")
-        st.markdown("Bekijk je totale afstand en duur geaggregeerd per week of per maand, afhankelijk van de geselecteerde periode.")
+        st.markdown("Bekijk je **gemiddelde** afstand en duur geaggregeerd per week of per maand, afhankelijk van de geselecteerde periode.")
 
         # Haal de start- en einddatum van de filters op
         start_date_filter = st.session_state.get('start_date_filter')
@@ -442,78 +442,84 @@ if uploaded_file is not None and not filtered_df.empty:
             date_range_days = (end_date_filter - start_date_filter).days + 1
 
             if date_range_days <= 31: # Minder dan 32 dagen: per week
-                st.subheader("Afstand en Duur per Week")
-                if 'year_week' in filtered_df.columns:
+                st.subheader("Gemiddelde Afstand en Duur per Week")
+                if 'year_week' in filtered_df.columns and 'distance_km' in filtered_df.columns and 'duration_seconds' in filtered_df.columns:
                     df_weekly = filtered_df.groupby('year_week').agg(
-                        total_distance=('distance_km', 'sum'),
-                        total_duration=('duration_seconds', 'sum')
+                        avg_distance=('distance_km', 'mean'), # Nu gemiddelde
+                        avg_duration=('duration_seconds', 'mean') # Nu gemiddelde
                     ).reset_index()
-                    df_weekly.columns = ['Periode', 'Totale Afstand (km)', 'Totale Duur (sec)']
-                    df_weekly['Totale Duur (HH:MM:SS)'] = df_weekly['Totale Duur (sec)'].apply(format_duration)
+                    df_weekly.columns = ['Periode', 'Gem. Afstand (km)', 'Gem. Duur (sec)']
+                    df_weekly['Gem. Duur (HH:MM:SS)'] = df_weekly['Gem. Duur (sec)'].apply(format_duration)
 
-                    # Afstand per week
+                    # Gemiddelde afstand per week
                     fig_weekly_dist = px.bar(
                         df_weekly,
                         x='Periode',
-                        y='Totale Afstand (km)',
-                        title='Totale Afstand per Week',
-                        labels={'Periode': 'Jaar-Week', 'Totale Afstand (km)': 'Afstand (km)'},
+                        y='Gem. Afstand (km)',
+                        title='Gemiddelde Afstand per Week',
+                        labels={'Periode': 'Jaar-Week', 'Gem. Afstand (km)': 'Gemiddelde Afstand (km)'},
                         template="plotly_dark",
-                        color='Totale Afstand (km)'
+                        color='Gem. Afstand (km)',
+                        text_auto='.2f' # Toon waarde op de balk, 2 decimalen
                     )
+                    fig_weekly_dist.update_traces(textposition='outside') # Plaats tekst buiten de balk
                     st.plotly_chart(fig_weekly_dist, use_container_width=True)
 
-                    # Duur per week
+                    # Gemiddelde duur per week
                     fig_weekly_dur = px.bar(
                         df_weekly,
                         x='Periode',
-                        y='Totale Duur (sec)',
-                        title='Totale Duur per Week',
-                        labels={'Periode': 'Jaar-Week', 'Totale Duur (sec)': 'Duur (seconden)'},
+                        y='Gem. Duur (sec)',
+                        title='Gemiddelde Duur per Week',
+                        labels={'Periode': 'Jaar-Week', 'Gem. Duur (sec)': 'Gemiddelde Duur (seconden)'},
                         template="plotly_dark",
-                        color='Totale Duur (sec)',
-                        hover_data={'Totale Duur (sec)': False, 'Totale Duur (HH:MM:SS)': True}
+                        color='Gem. Duur (sec)',
+                        text='Gem. Duur (HH:MM:SS)' # Toon geformatteerde duur op de balk
                     )
+                    fig_weekly_dur.update_traces(textposition='outside') # Plaats tekst buiten de balk
                     st.plotly_chart(fig_weekly_dur, use_container_width=True)
                 else:
-                    st.info("Weekdata niet beschikbaar, controleer of de 'Datum' kolom correct is.")
+                    st.info("Niet genoeg data (afstand, duur, of datum) om de wekelijkse vergelijking te tonen.")
 
             else: # Meer dan 31 dagen: per maand
-                st.subheader("Afstand en Duur per Maand")
-                if 'year_month' in filtered_df.columns:
+                st.subheader("Gemiddelde Afstand en Duur per Maand")
+                if 'year_month' in filtered_df.columns and 'distance_km' in filtered_df.columns and 'duration_seconds' in filtered_df.columns:
                     df_monthly = filtered_df.groupby('year_month').agg(
-                        total_distance=('distance_km', 'sum'),
-                        total_duration=('duration_seconds', 'sum')
+                        avg_distance=('distance_km', 'mean'), # Nu gemiddelde
+                        avg_duration=('duration_seconds', 'mean') # Nu gemiddelde
                     ).reset_index()
-                    df_monthly.columns = ['Periode', 'Totale Afstand (km)', 'Totale Duur (sec)']
-                    df_monthly['Totale Duur (HH:MM:SS)'] = df_monthly['Totale Duur (sec)'].apply(format_duration)
+                    df_monthly.columns = ['Periode', 'Gem. Afstand (km)', 'Gem. Duur (sec)']
+                    df_monthly['Gem. Duur (HH:MM:SS)'] = df_monthly['Gem. Duur (sec)'].apply(format_duration)
 
-                    # Afstand per maand
+                    # Gemiddelde afstand per maand
                     fig_monthly_dist = px.bar(
                         df_monthly,
                         x='Periode',
-                        y='Totale Afstand (km)',
-                        title='Totale Afstand per Maand',
-                        labels={'Periode': 'Jaar-Maand', 'Totale Afstand (km)': 'Afstand (km)'},
+                        y='Gem. Afstand (km)',
+                        title='Gemiddelde Afstand per Maand',
+                        labels={'Periode': 'Jaar-Maand', 'Gem. Afstand (km)': 'Gemiddelde Afstand (km)'},
                         template="plotly_dark",
-                        color='Totale Afstand (km)'
+                        color='Gem. Afstand (km)',
+                        text_auto='.2f' # Toon waarde op de balk, 2 decimalen
                     )
+                    fig_monthly_dist.update_traces(textposition='outside') # Plaats tekst buiten de balk
                     st.plotly_chart(fig_monthly_dist, use_container_width=True)
 
-                    # Duur per maand
+                    # Gemiddelde duur per maand
                     fig_monthly_dur = px.bar(
                         df_monthly,
                         x='Periode',
-                        y='Totale Duur (sec)',
-                        title='Totale Duur per Maand',
-                        labels={'Periode': 'Jaar-Maand', 'Totale Duur (sec)': 'Duur (seconden)'},
+                        y='Gem. Duur (sec)',
+                        title='Gemiddelde Duur per Maand',
+                        labels={'Periode': 'Jaar-Maand', 'Gem. Duur (sec)': 'Gemiddelde Duur (seconden)'},
                         template="plotly_dark",
-                        color='Totale Duur (sec)',
-                        hover_data={'Totale Duur (sec)': False, 'Totale Duur (HH:MM:SS)': True}
+                        color='Gem. Duur (sec)',
+                        text='Gem. Duur (HH:MM:SS)' # Toon geformatteerde duur op de balk
                     )
+                    fig_monthly_dur.update_traces(textposition='outside') # Plaats tekst buiten de balk
                     st.plotly_chart(fig_monthly_dur, use_container_width=True)
                 else:
-                    st.info("Maanddata niet beschikbaar, controleer of de 'Datum' kolom correct is.")
+                    st.info("Niet genoeg data (afstand, duur, of datum) om de maandelijkse vergelijking te tonen.")
         else:
             st.info("Selecteer een periode met data in het zijmenu om de vergelijking te zien.")
 
@@ -531,7 +537,11 @@ if uploaded_file is not None and not filtered_df.empty:
             mime="text/csv",
         )
 
-elif uploaded_file is None:
+else:
     st.info("Upload een Excel- of CSV-bestand met je sportactiviteiten om het dashboard te genereren.")
-elif df_full is not None and df_full.empty:
-    st.warning("Het geüploade bestand bevat geen leesbare gegevens.")
+    st.markdown("---")
+    st.markdown("""
+        **Tip:** Zorg ervoor dat je bestand kolommen bevat zoals `Activiteittype`, `Datum`, `Afstand`, `Calorieën`, en `Tijd` voor de beste analyse.
+    """)
+    if uploaded_file is not None and df_full is not None and df_full.empty:
+        st.warning("Het geüploade bestand bevat geen leesbare gegevens.")
