@@ -224,7 +224,7 @@ else:
 
     st.markdown("---")
 
-    tab_performance, tab_map, tab_raw_data = st.tabs(["📊 Prestaties over Tijd", "🗺️ Activiteit Route", "📋 Overzicht Tabel", "📋 Ruwe Data"])
+    tab_performance, tab_map, tab_table, tab_raw_data = st.tabs(["📊 Prestaties over Tijd", "🗺️ Activiteit Route", "📋 Overzicht Tabel", "📋 Ruwe Data"])
 
     with tab_performance:
         st.subheader("Prestaties over Tijd (per activiteit)")
