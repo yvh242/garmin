@@ -311,7 +311,7 @@ else:
                     mapbox_style="open-street-map",
                     title="Afgelegde Routes",
                     hover_name="Activity_ID", # Toon Activity_ID bij hover
-                    hover_data={'DatumTijd': True, 'Afstand_km': ':.2f', 'Hartslag_bpm': True, 'Activity_ID': False}
+                    hover_data={'DatumTijd': True, 'Afstand_km': ':.2f', 'Hartslag_bpm': True, 'Activity_ID': False},
                     line_width=3
                 )
 
