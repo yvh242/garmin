@@ -57,7 +57,6 @@ def parse_fit_file(file_bytes, activity_id):
         df.rename(columns=column_renames, inplace=True)
 
         # Convert raw semicircles GPS to degrees
-        # 1 semicircle = 180 / 2^31 degrees
         if 'Latitude_semicircles' in df.columns and 'Longitude_semicircles' in df.columns:
             df['Latitude'] = df['Latitude_semicircles'] * (180 / 2**31)
             df['Longitude'] = df['Longitude_semicircles'] * (180 / 2**31)
@@ -82,8 +81,8 @@ def parse_fit_file(file_bytes, activity_id):
             df['DatumTijd'] = pd.to_datetime(df['DatumTijd'], errors='coerce')
             df.dropna(subset=['DatumTijd'], inplace=True) # Drop rows where datetime is invalid
             df = df.sort_values(by='DatumTijd').reset_index(drop=True)
-            # Tijd_sec based on timestamp difference (Elapsed Time) - not used for total duration anymore
-            # df['Tijd_sec'] = (df['DatumTijd'] - df['DatumTijd'].iloc[0]).dt.total_seconds()
+            # Re-introduce Tijd_sec based on elapsed time from start of records
+            df['Tijd_sec'] = (df['DatumTijd'] - df['DatumTijd'].iloc[0]).dt.total_seconds()
         else:
             st.error("Geen 'timestamp' data gevonden in het FIT-bestand. Kan geen dashboard genereren.")
             return pd.DataFrame()
@@ -92,14 +91,11 @@ def parse_fit_file(file_bytes, activity_id):
         df['Activity_ID'] = activity_id
 
         # --- Extract Session/Activity Summary Data (for KPIs) ---
-        # Initialize with default values
         session_calories = 0
         session_max_speed_kmh = 0
         session_total_elevation_gain_m = 0
         activity_type = "Onbekend"
-        session_total_timer_time = 0 # NEW: Initialize total_timer_time
 
-        # Loop through session messages to get summary data
         for session in fit_file.get_messages('session'):
             session_dict = session.as_dict()
             if 'sport' in session_dict and session_dict['sport'] is not None:
@@ -110,16 +106,12 @@ def parse_fit_file(file_bytes, activity_id):
                 session_max_speed_kmh = session_dict['max_speed'] * 3.6
             if 'total_elevation_gain' in session_dict and session_dict['total_elevation_gain'] is not None:
                  session_total_elevation_gain_m = session_dict['total_elevation_gain']
-            if 'total_timer_time' in session_dict and session_dict['total_timer_time'] is not None: # NEW: Read total_timer_time
-                session_total_timer_time = session_dict['total_timer_time']
-            break # Take the first found session, usually one session per file for an activity
+            break
 
-        # Add these session-level totals as single-value columns to the DataFrame
         df['Activiteitstype'] = activity_type
         df['Totale_Calorieën'] = session_calories
         df['Max_Snelheid_Activiteit'] = session_max_speed_kmh
         df['Totale_Stijging_Meters'] = session_total_elevation_gain_m
-        df['Totale_Duur_Timer_Sec'] = session_total_timer_time # NEW: Add to DataFrame
 
         return df
 
@@ -177,7 +169,6 @@ else:
     df = st.session_state.fit_df
 
     # --- Tabs ---
-    # Removed 'Prestaties over Tijd' tab
     tab_map, tab_table, tab_raw_data = st.tabs(["🗺️ Activiteit Route", "📋 Overzicht Tabel", "📋 Ruwe Data"])
 
     with tab_map:
@@ -194,7 +185,7 @@ else:
                     lat="Latitude",
                     lon="Longitude",
                     color="Activity_ID",
-                    zoom=12,
+                    zoom=10, # Aangepast: Probeer een lagere zoomwaarde voor een grotere kaartweergave
                     height=700,
                     mapbox_style="open-street-map",
                     title="Afgelegde Routes",
@@ -202,15 +193,12 @@ else:
                     hover_data={'DatumTijd': True, 'Afstand_km': ':.2f', 'Hartslag_bpm': True, 'Activity_ID': False}
                 )
 
-                # Adjust line width after creating the map
                 fig_map.update_traces(line=dict(width=3))
 
 
-                # Add start and end points for each activity
                 for activity_id in df_map['Activity_ID'].unique():
                     activity_df = df_map[df_map['Activity_ID'] == activity_id]
                     if not activity_df.empty:
-                        # Startpunkt
                         fig_map.add_trace(go.Scattermapbox(
                             lat=[activity_df['Latitude'].iloc[0]],
                             lon=[activity_df['Longitude'].iloc[0]],
@@ -220,7 +208,6 @@ else:
                             hoverinfo='name',
                             showlegend=False
                         ))
-                        # Eindpunkt
                         fig_map.add_trace(go.Scattermapbox(
                             lat=[activity_df['Latitude'].iloc[-1]],
                             lon=[activity_df['Longitude'].iloc[-1]],
@@ -245,20 +232,20 @@ else:
             summary_df = df.groupby('Activity_ID').agg(
                 Datum=('DatumTijd', lambda x: x.min().strftime('%Y-%m-%d') if not x.empty else 'N/B'),
                 Totale_Afstand_km=('Afstand_km', 'max'),
-                Totale_Duur_Timer_Sec=('Totale_Duur_Timer_Sec', 'first'), # Using total_timer_time from session
+                Totale_Duur_sec=('Tijd_sec', 'max'), # Using max of Tijd_sec (Elapsed Time) for duration
                 Gemiddelde_Hartslag=('Hartslag_bpm', lambda x: x[x > 0].mean() if not x.empty else 0),
                 Maximale_Hartslag=('Hartslag_bpm', 'max'),
                 Activiteitstype=('Activiteitstype', 'first')
             ).reset_index()
 
-            # Calculate average speed based on total distance and accurate timer duration
+            # Calculate average speed based on total distance and elapsed duration
             summary_df['Gemiddelde_Snelheid_kmh'] = summary_df.apply(
-                lambda row: (row['Totale_Afstand_km'] / (row['Totale_Duur_Timer_Sec'] / 3600)) if row['Totale_Duur_Timer_Sec'] > 0 else 0,
+                lambda row: (row['Totale_Afstand_km'] / (row['Totale_Duur_sec'] / 3600)) if row['Totale_Duur_sec'] > 0 else 0,
                 axis=1
             )
 
             # Format the total duration
-            summary_df['Totale_Duur'] = summary_df['Totale_Duur_Timer_Sec'].apply(format_duration)
+            summary_df['Totale_Duur'] = summary_df['Totale_Duur_sec'].apply(format_duration)
 
             # Round numerical columns and ensure proper display
             summary_df['Totale_Afstand_km'] = summary_df['Totale_Afstand_km'].round(2)
