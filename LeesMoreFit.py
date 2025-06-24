@@ -224,7 +224,7 @@ else:
 
     st.markdown("---")
 
-    tab_performance, tab_map, tab_raw_data = st.tabs(["📊 Prestaties over Tijd", "🗺️ Activiteit Route", "📋 Ruwe Data"])
+    tab_performance, tab_map, tab_raw_data = st.tabs(["📊 Prestaties over Tijd", "🗺️ Activiteit Route", "📋 Overzicht Tabel", "📋 Ruwe Data"])
 
     with tab_performance:
         st.subheader("Prestaties over Tijd (per activiteit)")
@@ -345,6 +345,76 @@ else:
                 st.info("Geen geldige GPS-coördinaten gevonden in de bestanden om de routes te tonen.")
         else:
             st.info("Geen GPS-coördinaten (Latitude/Longitude) beschikbaar in de geüploade FIT-bestanden om de routes te tonen.")
+
+
+with tab_table:
+    st.subheader("Overzicht van Alle Activiteiten")
+
+    if not df.empty:
+        # Aggregeer de data per activiteit voor de tabel
+        # We groeperen op Activity_ID en berekenen de gewenste statistieken
+        summary_df = df.groupby('Activity_ID').agg(
+            # Datum: De startdatum van de activiteit
+            Datum=('DatumTijd', lambda x: x.min().strftime('%Y-%m-%d') if not x.empty else 'N/B'),
+            # Totale afstand (max van de cumulatieve afstand in Afstand_km)
+            Totale_Afstand_km=('Afstand_km', 'max'),
+            # Gemiddelde snelheid per uur (gemiddelde van de snelheden in km/u)
+            Gemiddelde_Snelheid_kmh=('Snelheid_kmh', lambda x: x[x > 0].mean() if not x.empty else 0),
+            # Gemiddelde hartslag
+            Gemiddelde_Hartslag=('Hartslag_bpm', lambda x: x[x > 0].mean() if not x.empty else 0),
+            # Maximale hartslag
+            Maximale_Hartslag=('Hartslag_bpm', 'max'),
+            # Totale duur (max van de cumulatieve tijd in Tijd_sec)
+            Totale_Duur_sec=('Tijd_sec', 'max'),
+            # Activiteitstype
+            Activiteitstype=('Activiteitstype', 'first')
+        ).reset_index()
+
+        # Formatteer de Totale_Duur_sec naar HH:MM:SS
+        summary_df['Totale_Duur'] = summary_df['Totale_Duur_sec'].apply(format_duration)
+
+        # Rond de numerieke kolommen af en zorg voor goede weergave
+        summary_df['Totale_Afstand_km'] = summary_df['Totale_Afstand_km'].round(2)
+        summary_df['Gemiddelde_Snelheid_kmh'] = summary_df['Gemiddelde_Snelheid_kmh'].round(1)
+        summary_df['Gemiddelde_Hartslag'] = summary_df['Gemiddelde_Hartslag'].round(0).astype('Int64') # Int64 voor NaN support
+        summary_df['Maximale_Hartslag'] = summary_df['Maximale_Hartslag'].round(0).astype('Int64')
+
+        # Selecteer en herordenen de kolommen voor de weergave
+        display_columns = [
+            'Activity_ID',
+            'Datum',
+            'Activiteitstype',
+            'Totale_Afstand_km',
+            'Totale_Duur',
+            'Gemiddelde_Snelheid_kmh',
+            'Gemiddelde_Hartslag',
+            'Maximale_Hartslag'
+        ]
+        summary_df = summary_df[display_columns].copy()
+
+        # Hernoem kolommen voor een mooiere weergave in de tabel
+        summary_df.rename(columns={
+            'Activity_ID': 'Bestandsnaam',
+            'Totale_Afstand_km': 'Afstand (km)',
+            'Gemiddelde_Snelheid_kmh': 'Gem. Snelheid (km/u)',
+            'Gemiddelde_Hartslag': 'Gem. Hartslag (bpm)',
+            'Maximale_Hartslag': 'Max. Hartslag (bpm)',
+            'Totale_Duur': 'Duur (UU:MM:SS)'
+        }, inplace=True)
+
+        st.dataframe(summary_df, use_container_width=True)
+
+        # Optioneel: Download knop voor deze specifieke tabel
+        csv_export_summary = summary_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download overzichtstabel als CSV",
+            data=csv_export_summary,
+            file_name="fit_summary_table.csv",
+            mime="text/csv",
+        )
+
+    else:
+        st.info("Geen activiteiten geladen om een overzichtstabel te tonen.")
 
 
     with tab_raw_data: # Ruwe Data tab
