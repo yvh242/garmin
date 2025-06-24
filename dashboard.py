@@ -566,6 +566,7 @@ if uploaded_file is not None and not filtered_df.empty:
         if (not filtered_df.empty and
             'distance_km' in filtered_df.columns and filtered_df['distance_km'].notna().any() and
             'duration_seconds' in filtered_df.columns and filtered_df['duration_seconds'].notna().any() and
+            'avg_heart_rate_bpm' in filtered_df.columns and filtered_df['avg_heart_rate_bpm'].notna().any() and # Added for avg heart rate
             'year_week' in filtered_df.columns and filtered_df['year_week'].notna().any() and
             'year_month' in filtered_df.columns and filtered_df['year_month'].notna().any()):
 
@@ -575,7 +576,8 @@ if uploaded_file is not None and not filtered_df.empty:
                     total_distance=('distance_km', 'sum'),
                     avg_distance=('distance_km', 'mean'),
                     total_duration=('duration_seconds', 'sum'),
-                    avg_duration=('duration_seconds', 'mean')
+                    avg_duration=('duration_seconds', 'mean'),
+                    avg_heart_rate=('avg_heart_rate_bpm', lambda x: x[x > 0].mean()) # Gemiddelde HS, excl. 0-waarden
                 ).reset_index()
 
                 # Daarna de unieke start- en einddatums van de week ophalen en toevoegen
@@ -588,7 +590,7 @@ if uploaded_file is not None and not filtered_df.empty:
                 # Merge de geaggregeerde data met de weekdatums
                 df_agg_new = pd.merge(df_agg_new, week_dates, on='year_week', how='left')
 
-                df_agg_new.columns = ['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)', 'Datum Week Start', 'Datum Week Einde']
+                df_agg_new.columns = ['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)', 'Gem. Hartslag (bpm)', 'Datum Week Start', 'Datum Week Einde']
                 df_agg_new['Week Periode'] = df_agg_new['Datum Week Start'].dt.strftime('%d-%m') + ' t/m ' + df_agg_new['Datum Week Einde'].dt.strftime('%d-%m')
 
                 x_label = 'Jaar-Week (JJJJ-WW)'
@@ -599,9 +601,10 @@ if uploaded_file is not None and not filtered_df.empty:
                     total_distance=('distance_km', 'sum'),
                     avg_distance=('distance_km', 'mean'),
                     total_duration=('duration_seconds', 'sum'),
-                    avg_duration=('duration_seconds', 'mean')
+                    avg_duration=('duration_seconds', 'mean'),
+                    avg_heart_rate=('avg_heart_rate_bpm', lambda x: x[x > 0].mean()) # Gemiddelde HS, excl. 0-waarden
                 ).reset_index()
-                df_agg_new.columns = ['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)']
+                df_agg_new.columns = ['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)', 'Gem. Hartslag (bpm)']
                 x_label = 'Jaar-Maand (JJJJ-MM)'
                 show_xaxis_range_slider = False
                 x_tickangle = -45 # Schuine labels voor maanden
@@ -610,6 +613,7 @@ if uploaded_file is not None and not filtered_df.empty:
             # Formatteer duur kolommen voor weergave in zowel grafiek als tabel
             df_agg_new['Totale Duur (HH:MM:SS)'] = df_agg_new['Totale Duur (sec)'].apply(format_duration)
             df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
+            df_agg_new['Gem. Hartslag (bpm)'] = df_agg_new['Gem. Hartslag (bpm)'].round(0).astype('Int64').fillna(0) # Afronden naar heel getal, NaN naar 0
 
             if display_type == 'Grafiek':
                 # --- Grafieken voor Totaal en Gemiddeld Afstand ---
@@ -645,7 +649,8 @@ if uploaded_file is not None and not filtered_df.empty:
                         fig_total_dist_new.update_xaxes(
                             tickformat="%Y-%m", # Formatteer als YYYY-MM
                             dtick="M1", # Toon elke maand
-                            ticklabelmode="period" # Zorgt voor correcte labels bij de periode
+                            ticklabelmode="period", # Zorgt voor correcte labels bij de periode
+                            # range=[df_agg_new['Periode'].min(), df_agg_new['Periode'].max()] # Fix the range to include all months
                         )
                     st.plotly_chart(fig_total_dist_new, use_container_width=True)
 
@@ -679,7 +684,8 @@ if uploaded_file is not None and not filtered_df.empty:
                         fig_avg_dist_new.update_xaxes(
                             tickformat="%Y-%m", # Formatteer als YYYY-MM
                             dtick="M1", # Toon elke maand
-                            ticklabelmode="period" # Zorgt voor correcte labels bij de periode
+                            ticklabelmode="period", # Zorgt voor correcte labels bij de periode
+                            # range=[df_agg_new['Periode'].min(), df_agg_new['Periode'].max()] # Fix the range to include all months
                         )
                     st.plotly_chart(fig_avg_dist_new, use_container_width=True)
 
@@ -716,7 +722,8 @@ if uploaded_file is not None and not filtered_df.empty:
                         fig_total_dur_new.update_xaxes(
                             tickformat="%Y-%m", # Formatteer als YYYY-MM
                             dtick="M1", # Toon elke maand
-                            ticklabelmode="period" # Zorgt voor correcte labels bij de periode
+                            ticklabelmode="period", # Zorgt voor correcte labels bij de periode
+                            # range=[df_agg_new['Periode'].min(), df_agg_new['Periode'].max()] # Fix the range to include all months
                         )
                     st.plotly_chart(fig_total_dur_new, use_container_width=True)
 
@@ -750,17 +757,56 @@ if uploaded_file is not None and not filtered_df.empty:
                         fig_avg_dur_new.update_xaxes(
                             tickformat="%Y-%m", # Formatteer als YYYY-MM
                             dtick="M1", # Toon elke maand
-                            ticklabelmode="period" # Zorgt voor correcte labels bij de periode
+                            ticklabelmode="period", # Zorgt voor correcte labels bij de periode
+                            # range=[df_agg_new['Periode'].min(), df_agg_new['Periode'].max()] # Fix the range to include all months
                         )
                     st.plotly_chart(fig_avg_dur_new, use_container_width=True)
+
+                # --- Grafiek voor Gemiddelde Hartslag (alleen in grafiekweergave) ---
+                if 'Gem. Hartslag (bpm)' in df_agg_new.columns and df_agg_new['Gem. Hartslag (bpm)'].sum() > 0:
+                    st.subheader(f"Gemiddelde Hartslag {aggregation_period_new_tab.lower()}")
+                    fig_avg_hr_new = px.bar(
+                        df_agg_new,
+                        x='Periode',
+                        y='Gem. Hartslag (bpm)',
+                        title=f'Gemiddelde Hartslag {aggregation_period_new_tab.lower()}',
+                        labels={'Periode': x_label, 'Gem. Hartslag (bpm)': 'Gemiddelde Hartslag (bpm)'},
+                        template="plotly_dark",
+                        text_auto='.0f' # Toont hele getallen
+                    )
+                    fig_avg_hr_new.update_traces(textposition='outside', marker_color='#DAA520') # Gouden kleur
+                    fig_avg_hr_new.update_layout(showlegend=False)
+                    fig_avg_hr_new.update_xaxes(
+                        tickangle=x_tickangle,
+                        rangeslider_visible=show_xaxis_range_slider,
+                        rangeselector=dict(
+                            buttons=list([
+                                dict(count=1, label="1m", step="month", stepmode="backward"),
+                                dict(count=6, label="6m", step="month", stepmode="backward"),
+                                dict(count=1, label="1j", step="year", stepmode="backward"),
+                                dict(step="all")
+                            ])
+                        ) if show_xaxis_range_slider else None
+                    )
+                    if aggregation_period_new_tab == 'Per Maand':
+                        fig_avg_hr_new.update_xaxes(
+                            tickformat="%Y-%m", # Formatteer als YYYY-MM
+                            dtick="M1", # Toon elke maand
+                            ticklabelmode="period", # Zorgt voor correcte labels bij de periode
+                            # range=[df_agg_new['Periode'].min(), df_agg_new['Periode'].max()] # Fix the range to include all months
+                        )
+                    st.plotly_chart(fig_avg_hr_new, use_container_width=True)
+                else:
+                    st.info("Niet genoeg hartslagdata om de grafiek te tonen.")
+
             else: # display_type == 'Tabel'
                 st.subheader(f"Overzichtstabel {aggregation_period_new_tab.lower()}")
 
                 # Selecteer kolommen voor de tabelweergave, inclusief 'Week Periode' indien van toepassing
                 if aggregation_period_new_tab == 'Per Week':
-                    df_agg_new_display = df_agg_new[['Periode', 'Week Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (HH:MM:SS)', 'Gem. Duur (HH:MM:SS)']].copy()
+                    df_agg_new_display = df_agg_new[['Periode', 'Week Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (HH:MM:SS)', 'Gem. Duur (HH:MM:SS)', 'Gem. Hartslag (bpm)']].copy()
                 else: # Per Maand
-                    df_agg_new_display = df_agg_new[['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (HH:MM:SS)', 'Gem. Duur (HH:MM:SS)']].copy()
+                    df_agg_new_display = df_agg_new[['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (HH:MM:SS)', 'Gem. Duur (HH:MM:SS)', 'Gem. Hartslag (bpm)']].copy()
 
                 st.dataframe(df_agg_new_display, use_container_width=True)
 
@@ -773,7 +819,7 @@ if uploaded_file is not None and not filtered_df.empty:
                 )
 
         else:
-            st.info("Niet genoeg data (afstand, duur, of geldige datums/periodes) om het overzicht te tonen voor de geselecteerde filters.")
+            st.info("Niet genoeg data (afstand, duur, hartslag of geldige datums/periodes) om het overzicht te tonen voor de geselecteerde filters.")
 
 
     with tab5: # Ruwe Data tab
