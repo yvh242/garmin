@@ -112,20 +112,31 @@ def parse_fit_file(file_bytes, activity_id):
         df['Max_Snelheid_Activiteit'] = session_max_speed_kmh
         df['Totale_Stijging_Meters'] = session_total_elevation_gain_m
 
-        # --- NIEUW: Bereken 'Tijd in Beweging' ---
+        # --- Bereken 'Tijd in Beweging' ---
         SPEED_THRESHOLD_KMH = 0.5 # Drempelwaarde voor stilstand in km/u
 
-        if 'Snelheid_kmh' in df.columns and not df['Snelheid_kmh'].isnull().all():
-            df['Is_Moving'] = df['Snelheid_kmh'] > SPEED_THRESHOLD_KMH
-            df['Time_Diff_Sec'] = df['DatumTijd'].diff().dt.total_seconds().fillna(0)
-            df['Moving_Time_Contribution_Sec'] = df.apply(
-                lambda row: row['Time_Diff_Sec'] if row['Is_Moving'] else 0, axis=1
-            )
-            df['Tijd_in_Beweging_Sec'] = df['Moving_Time_Contribution_Sec'].cumsum().fillna(0)
-            total_moving_time_for_activity = df['Tijd_in_Beweging_Sec'].max() if not df['Tijd_in_Beweging_Sec'].empty else 0
-        else:
-            # Fallback als snelheid niet beschikbaar is: gebruik de totale verstreken tijd
-            total_moving_time_for_activity = df['Tijd_sec'].max() if 'Tijd_sec' in df.columns else 0
+        total_moving_time_for_activity = 0 # Initialiseer met 0
+
+        # Zorg ervoor dat DatumTijd en Snelheid_kmh kolommen aanwezig en gevuld zijn
+        if 'Snelheid_kmh' in df.columns and 'DatumTijd' in df.columns and not df.empty:
+            df['Snelheid_kmh'] = df['Snelheid_kmh'].fillna(0) # Vul NaN snelheden op met 0
+            # Vul ontbrekende datumtijdwaarden op om .diff() te laten werken
+            df['DatumTijd'] = df['DatumTijd'].fillna(method='ffill').fillna(method='bfill')
+
+            # Hercontroleer op leegte na opvulling
+            if not df['DatumTijd'].empty:
+                df['Is_Moving'] = df['Snelheid_kmh'] > SPEED_THRESHOLD_KMH
+                df['Time_Diff_Sec'] = df['DatumTijd'].diff().dt.total_seconds().fillna(0) # Vul diff-NaN's op met 0
+
+                df['Moving_Time_Contribution_Sec'] = df.apply(
+                    lambda row: row['Time_Diff_Sec'] if row['Is_Moving'] else 0, axis=1
+                )
+                total_moving_time_for_activity = df['Moving_Time_Contribution_Sec'].sum()
+        
+        # Fallback als de bewegingstijd 0 is (bijv. geen snelheidsdata of altijd stilstand)
+        # Gebruik de totale verstreken tijd (elapsed time)
+        if total_moving_time_for_activity == 0 and 'Tijd_sec' in df.columns and not df['Tijd_sec'].empty:
+             total_moving_time_for_activity = df['Tijd_sec'].max()
 
 
         # Voeg de berekende totale tijd in beweging toe aan elke rij voor deze activiteit
@@ -175,7 +186,7 @@ with st.sidebar:
     else:
         st.session_state.fit_df = pd.DataFrame()
         st.session_state.fit_dfs_list = []
-        st.info("Upload een of meerdere .fit bestanden met je sportactiviteiten om het dashboard te genereren.")
+        st.info("Upload een of meerdere .fit bestanden in de zijbalk om je sportactiviteit(en) te analyseren. Deze app is specifiek voor .fit-bestanden.")
 
 # --- Hoofd Dashboard Content ---
 st.title("🚴‍♂️ FIT Bestand Analyse Dashboard")
@@ -250,7 +261,7 @@ else:
             summary_df = df.groupby('Activity_ID').agg(
                 Datum=('DatumTijd', lambda x: x.min().strftime('%Y-%m-%d') if not x.empty else 'N/B'),
                 Totale_Afstand_km=('Afstand_km', 'max'),
-                # AANGEPAST: Gebruik de berekende "Tijd in Beweging"
+                # Gebruik de berekende "Tijd in Beweging"
                 Totale_Duur_Sec=('Totale_Tijd_in_Beweging_Activiteit_Sec', 'first'),
                 Gemiddelde_Hartslag=('Hartslag_bpm', lambda x: x[x > 0].mean() if not x.empty else 0),
                 Maximale_Hartslag=('Hartslag_bpm', 'max'),
@@ -278,7 +289,7 @@ else:
                 'Datum',
                 'Activiteitstype',
                 'Afstand (km)',
-                'Duur (UU:MM:SS)',
+                'Duur (UU:MM:SS)', # This is now "Tijd in Beweging"
                 'Gem. Snelheid (km/u)',
                 'Gem. Hartslag (bpm)',
                 'Max. Hartslag (bpm)'
@@ -290,7 +301,7 @@ else:
                 'Gemiddelde_Snelheid_kmh': 'Gem. Snelheid (km/u)',
                 'Gemiddelde_Hartslag': 'Gem. Hartslag (bpm)',
                 'Maximale_Hartslag': 'Max. Hartslag (bpm)',
-                'Totale_Duur': 'Duur (UU:MM:SS)' # This is now "Tijd in Beweging"
+                'Totale_Duur': 'Duur (UU:MM:SS)'
             })[display_columns].copy()
 
 
