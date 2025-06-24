@@ -1,0 +1,7 @@
+# mijn_sportdashboard/.streamlit/config.toml
+[theme]
+primaryColor="#FF4B4B"            # Rode accentkleur
+backgroundColor="#0E1117"         # Donkere achtergrond
+secondaryBackgroundColor="#262730" # Donkere zijbalk
+textColor="#FAFAFA"               # Lichtgrijs tekst
+font="sans serif"                 # Standaard lettertype
