@@ -127,7 +127,9 @@ def load_and_process_data(uploaded_file):
 
     # Voeg week- en maandkolommen toe voor aggregatie
     if 'date' in df.columns and not df['date'].empty and df['date'].notna().any():
+        # Formatteer year_week als 'YYYY-WW' zodat het correct sorteert en weergeeft
         df['year_week'] = df['date'].dt.strftime('%Y-%W')
+        # Formatteer year_month als 'YYYY-MM'
         df['year_month'] = df['date'].dt.strftime('%Y-%m')
         df['date_week_start'] = df['date'].apply(lambda x: x - timedelta(days=x.weekday()))
     else:
@@ -531,6 +533,8 @@ if uploaded_file is not None and not filtered_df.empty:
         else:
             st.info("Selecteer een periode met data in het zijmenu om de vergelijking te zien.")
 
+    ---
+
     # NIEUW TABBLAD: Overzicht per Periode
     with tab_new_period_overview:
         st.header("Overzicht per Week of Maand")
@@ -541,7 +545,7 @@ if uploaded_file is not None and not filtered_df.empty:
             "Selecteer periode voor overzicht:",
             ('Per Week', 'Per Maand'),
             horizontal=True,
-            key='new_tab_agg_period' # Belangrijk: unieke key voor deze radio button
+            key='new_tab_agg_period'
         )
         st.markdown(f"**Toont overzicht {aggregation_period_new_tab.lower()}**")
 
@@ -562,6 +566,8 @@ if uploaded_file is not None and not filtered_df.empty:
                 df_agg_new['Totale Duur (HH:MM:SS)'] = df_agg_new['Totale Duur (sec)'].apply(format_duration)
                 df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
                 x_label = 'Jaar-Week'
+                show_xaxis_range_slider = True # Activeer slider voor weekoverzicht
+                x_tickangle = 0 # Horizontaal
             else: # Per Maand
                 df_agg_new = filtered_df.groupby('year_month').agg(
                     total_distance=('distance_km', 'sum'),
@@ -572,7 +578,9 @@ if uploaded_file is not None and not filtered_df.empty:
                 df_agg_new.columns = ['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)']
                 df_agg_new['Totale Duur (HH:MM:SS)'] = df_agg_new['Totale Duur (sec)'].apply(format_duration)
                 df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
-                x_label = 'Jaar-Maand'
+                x_label = 'Jaar-Maand (JJJJ-MM)' # Duidelijkere label
+                show_xaxis_range_slider = False # Niet nodig voor maandoverzicht
+                x_tickangle = -45 # Schuine labels
 
             # --- Grafieken voor Totaal en Gemiddeld Afstand ---
             col_total_dist_new, col_avg_dist_new = st.columns(2)
@@ -588,8 +596,20 @@ if uploaded_file is not None and not filtered_df.empty:
                     template="plotly_dark",
                     text_auto='.2f'
                 )
-                fig_total_dist_new.update_traces(textposition='outside', marker_color='#FF4B4B') # Streamlit's primaire kleur
+                fig_total_dist_new.update_traces(textposition='outside', marker_color='#FF4B4B')
                 fig_total_dist_new.update_layout(showlegend=False)
+                fig_total_dist_new.update_xaxes(
+                    tickangle=x_tickangle,
+                    rangeslider_visible=show_xaxis_range_slider,
+                    rangeselector=dict(
+                        buttons=list([
+                            dict(count=1, label="1m", step="month", stepmode="backward"),
+                            dict(count=6, label="6m", step="month", stepmode="backward"),
+                            dict(count=1, label="1j", step="year", stepmode="backward"),
+                            dict(step="all")
+                        ])
+                    ) if show_xaxis_range_slider else None
+                )
                 st.plotly_chart(fig_total_dist_new, use_container_width=True)
 
             with col_avg_dist_new:
@@ -603,8 +623,20 @@ if uploaded_file is not None and not filtered_df.empty:
                     template="plotly_dark",
                     text_auto='.2f'
                 )
-                fig_avg_dist_new.update_traces(textposition='outside', marker_color='#636EFA') # Een andere standaard Plotly kleur
+                fig_avg_dist_new.update_traces(textposition='outside', marker_color='#636EFA')
                 fig_avg_dist_new.update_layout(showlegend=False)
+                fig_avg_dist_new.update_xaxes(
+                    tickangle=x_tickangle,
+                    rangeslider_visible=show_xaxis_range_slider,
+                    rangeselector=dict(
+                        buttons=list([
+                            dict(count=1, label="1m", step="month", stepmode="backward"),
+                            dict(count=6, label="6m", step="month", stepmode="backward"),
+                            dict(count=1, label="1j", step="year", stepmode="backward"),
+                            dict(step="all")
+                        ])
+                    ) if show_xaxis_range_slider else None
+                )
                 st.plotly_chart(fig_avg_dist_new, use_container_width=True)
 
             # --- Grafieken voor Totaal en Gemiddeld Duur ---
@@ -621,8 +653,20 @@ if uploaded_file is not None and not filtered_df.empty:
                     template="plotly_dark",
                     text='Totale Duur (HH:MM:SS)'
                 )
-                fig_total_dur_new.update_traces(textposition='outside', marker_color='#00CC96') # Nog een andere standaard Plotly kleur
+                fig_total_dur_new.update_traces(textposition='outside', marker_color='#00CC96')
                 fig_total_dur_new.update_layout(showlegend=False)
+                fig_total_dur_new.update_xaxes(
+                    tickangle=x_tickangle,
+                    rangeslider_visible=show_xaxis_range_slider,
+                    rangeselector=dict(
+                        buttons=list([
+                            dict(count=1, label="1m", step="month", stepmode="backward"),
+                            dict(count=6, label="6m", step="month", stepmode="backward"),
+                            dict(count=1, label="1j", step="year", stepmode="backward"),
+                            dict(step="all")
+                        ])
+                    ) if show_xaxis_range_slider else None
+                )
                 st.plotly_chart(fig_total_dur_new, use_container_width=True)
 
             with col_avg_dur_new:
@@ -636,8 +680,20 @@ if uploaded_file is not None and not filtered_df.empty:
                     template="plotly_dark",
                     text='Gem. Duur (HH:MM:SS)'
                 )
-                fig_avg_dur_new.update_traces(textposition='outside', marker_color='#EF553B') # En weer een andere
+                fig_avg_dur_new.update_traces(textposition='outside', marker_color='#EF553B')
                 fig_avg_dur_new.update_layout(showlegend=False)
+                fig_avg_dur_new.update_xaxes(
+                    tickangle=x_tickangle,
+                    rangeslider_visible=show_xaxis_range_slider,
+                    rangeselector=dict(
+                        buttons=list([
+                            dict(count=1, label="1m", step="month", stepmode="backward"),
+                            dict(count=6, label="6m", step="month", stepmode="backward"),
+                            dict(count=1, label="1j", step="year", stepmode="backward"),
+                            dict(step="all")
+                        ])
+                    ) if show_xaxis_range_slider else None
+                )
                 st.plotly_chart(fig_avg_dur_new, use_container_width=True)
         else:
             st.info("Niet genoeg data (afstand, duur, of geldige datums/periodes) om het overzicht te tonen voor de geselecteerde filters.")
