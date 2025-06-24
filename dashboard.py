@@ -567,24 +567,29 @@ if uploaded_file is not None and not filtered_df.empty:
             'distance_km' in filtered_df.columns and filtered_df['distance_km'].notna().any() and
             'duration_seconds' in filtered_df.columns and filtered_df['duration_seconds'].notna().any() and
             'year_week' in filtered_df.columns and filtered_df['year_week'].notna().any() and
-            'year_month' in filtered_df.columns and filtered_df['year_month'].notna().any() and
-            'date_week_start' in filtered_df.columns and filtered_df['date_week_start'].notna().any()): # Toegevoegd check op date_week_start
+            'year_month' in filtered_df.columns and filtered_df['year_month'].notna().any()):
 
             if aggregation_period_new_tab == 'Per Week':
-                df_agg_new = filtered_df.groupby(['year_week', 'date_week_start', 'date_week_end']).agg( # Group op week start/end
+                # Eerst aggregeren op year_week
+                df_agg_new = filtered_df.groupby('year_week').agg(
                     total_distance=('distance_km', 'sum'),
                     avg_distance=('distance_km', 'mean'),
                     total_duration=('duration_seconds', 'sum'),
                     avg_duration=('duration_seconds', 'mean')
                 ).reset_index()
-                # Zorg voor unieke week start/end, en neem de eerste in geval van duplicaten
-                df_agg_new = df_agg_new.sort_values(by=['year_week', 'date_week_start']).drop_duplicates(subset=['year_week'])
-                df_agg_new['Periode'] = df_agg_new['year_week']
-                df_agg_new['Week Periode'] = df_agg_new['date_week_start'].dt.strftime('%d-%m') + ' t/m ' + df_agg_new['date_week_end'].dt.strftime('%d-%m')
-                df_agg_new.columns = ['Jaar-Week', 'Datum Week Start', 'Datum Week Einde', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)', 'Periode Display', 'Week Periode'] # Pas kolomnamen aan
-                # Hernoem 'Periode Display' naar 'Periode' en drop de andere onnodige kolommen
-                df_agg_new = df_agg_new[['Periode Display', 'Week Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)']]
-                df_agg_new = df_agg_new.rename(columns={'Periode Display': 'Periode'})
+
+                # Daarna de unieke start- en einddatums van de week ophalen en toevoegen
+                # We nemen de min_date_week_start en max_date_week_end per year_week om consistentie te garanderen
+                week_dates = filtered_df.groupby('year_week').agg(
+                    min_date_week_start=('date_week_start', 'min'),
+                    max_date_week_end=('date_week_end', 'max')
+                ).reset_index()
+
+                # Merge de geaggregeerde data met de weekdatums
+                df_agg_new = pd.merge(df_agg_new, week_dates, on='year_week', how='left')
+
+                df_agg_new.columns = ['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)', 'Datum Week Start', 'Datum Week Einde']
+                df_agg_new['Week Periode'] = df_agg_new['Datum Week Start'].dt.strftime('%d-%m') + ' t/m ' + df_agg_new['Datum Week Einde'].dt.strftime('%d-%m')
 
                 x_label = 'Jaar-Week (JJJJ-WW)'
                 show_xaxis_range_slider = True
