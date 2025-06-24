@@ -129,13 +129,18 @@ def load_and_process_data(uploaded_file):
     if 'date' in df.columns and not df['date'].empty and df['date'].notna().any():
         # Formatteer year_week als 'YYYY-WW' zodat het correct sorteert en weergeeft
         df['year_week'] = df['date'].dt.strftime('%Y-%W')
+        # Bereken de startdatum van de week voor elke activiteit
+        df['date_week_start'] = df['date'].apply(lambda x: x - timedelta(days=x.weekday()))
+        # Bereken de einddatum van de week
+        df['date_week_end'] = df['date_week_start'] + timedelta(days=6)
         # Formatteer year_month als 'YYYY-MM'
         df['year_month'] = df['date'].dt.strftime('%Y-%m')
-        df['date_week_start'] = df['date'].apply(lambda x: x - timedelta(days=x.weekday()))
     else:
         df['year_week'] = 'Onbekend'
         df['year_month'] = 'Onbekend'
         df['date_week_start'] = pd.NaT
+        df['date_week_end'] = pd.NaT
+
 
     return df
 
@@ -562,18 +567,25 @@ if uploaded_file is not None and not filtered_df.empty:
             'distance_km' in filtered_df.columns and filtered_df['distance_km'].notna().any() and
             'duration_seconds' in filtered_df.columns and filtered_df['duration_seconds'].notna().any() and
             'year_week' in filtered_df.columns and filtered_df['year_week'].notna().any() and
-            'year_month' in filtered_df.columns and filtered_df['year_month'].notna().any()):
+            'year_month' in filtered_df.columns and filtered_df['year_month'].notna().any() and
+            'date_week_start' in filtered_df.columns and filtered_df['date_week_start'].notna().any()): # Toegevoegd check op date_week_start
 
             if aggregation_period_new_tab == 'Per Week':
-                df_agg_new = filtered_df.groupby('year_week').agg(
+                df_agg_new = filtered_df.groupby(['year_week', 'date_week_start', 'date_week_end']).agg( # Group op week start/end
                     total_distance=('distance_km', 'sum'),
                     avg_distance=('distance_km', 'mean'),
                     total_duration=('duration_seconds', 'sum'),
                     avg_duration=('duration_seconds', 'mean')
                 ).reset_index()
-                df_agg_new.columns = ['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)']
-                df_agg_new['Totale Duur (HH:MM:SS)'] = df_agg_new['Totale Duur (sec)'].apply(format_duration)
-                df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
+                # Zorg voor unieke week start/end, en neem de eerste in geval van duplicaten
+                df_agg_new = df_agg_new.sort_values(by=['year_week', 'date_week_start']).drop_duplicates(subset=['year_week'])
+                df_agg_new['Periode'] = df_agg_new['year_week']
+                df_agg_new['Week Periode'] = df_agg_new['date_week_start'].dt.strftime('%d-%m') + ' t/m ' + df_agg_new['date_week_end'].dt.strftime('%d-%m')
+                df_agg_new.columns = ['Jaar-Week', 'Datum Week Start', 'Datum Week Einde', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)', 'Periode Display', 'Week Periode'] # Pas kolomnamen aan
+                # Hernoem 'Periode Display' naar 'Periode' en drop de andere onnodige kolommen
+                df_agg_new = df_agg_new[['Periode Display', 'Week Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)']]
+                df_agg_new = df_agg_new.rename(columns={'Periode Display': 'Periode'})
+
                 x_label = 'Jaar-Week (JJJJ-WW)'
                 show_xaxis_range_slider = True
                 x_tickangle = 0 # Horizontale labels voor weken
@@ -585,11 +597,13 @@ if uploaded_file is not None and not filtered_df.empty:
                     avg_duration=('duration_seconds', 'mean')
                 ).reset_index()
                 df_agg_new.columns = ['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)']
-                df_agg_new['Totale Duur (HH:MM:SS)'] = df_agg_new['Totale Duur (sec)'].apply(format_duration)
-                df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
                 x_label = 'Jaar-Maand (JJJJ-MM)'
                 show_xaxis_range_slider = False
                 x_tickangle = -45 # Schuine labels voor maanden
+
+            # Formatteer duur kolommen voor weergave in zowel grafiek als tabel
+            df_agg_new['Totale Duur (HH:MM:SS)'] = df_agg_new['Totale Duur (sec)'].apply(format_duration)
+            df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
 
             if display_type == 'Grafiek':
                 # --- Grafieken voor Totaal en Gemiddeld Afstand ---
@@ -707,8 +721,13 @@ if uploaded_file is not None and not filtered_df.empty:
                     st.plotly_chart(fig_avg_dur_new, use_container_width=True)
             else: # display_type == 'Tabel'
                 st.subheader(f"Overzichtstabel {aggregation_period_new_tab.lower()}")
-                # Zorg ervoor dat de 'Periode' kolom goed gesorteerd is voor de tabel
-                df_agg_new_display = df_agg_new[['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (HH:MM:SS)', 'Gem. Duur (HH:MM:SS)']].copy()
+
+                # Selecteer kolommen voor de tabelweergave, inclusief 'Week Periode' indien van toepassing
+                if aggregation_period_new_tab == 'Per Week':
+                    df_agg_new_display = df_agg_new[['Periode', 'Week Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (HH:MM:SS)', 'Gem. Duur (HH:MM:SS)']].copy()
+                else: # Per Maand
+                    df_agg_new_display = df_agg_new[['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (HH:MM:SS)', 'Gem. Duur (HH:MM:SS)']].copy()
+
                 st.dataframe(df_agg_new_display, use_container_width=True)
 
                 csv_export_agg = df_agg_new_display.to_csv(index=False).encode('utf-8')
