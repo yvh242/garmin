@@ -533,7 +533,7 @@ if uploaded_file is not None and not filtered_df.empty:
         else:
             st.info("Selecteer een periode met data in het zijmenu om de vergelijking te zien.")
 
-    
+
     # NIEUW TABBLAD: Overzicht per Periode
     with tab_new_period_overview:
         st.header("Overzicht per Week of Maand")
@@ -564,9 +564,10 @@ if uploaded_file is not None and not filtered_df.empty:
                 df_agg_new.columns = ['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)']
                 df_agg_new['Totale Duur (HH:MM:SS)'] = df_agg_new['Totale Duur (sec)'].apply(format_duration)
                 df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
-                x_label = 'Jaar-Week'
-                show_xaxis_range_slider = True # Activeer slider voor weekoverzicht
-                x_tickangle = 0 # Horizontaal
+                x_label = 'Jaar-Week (JJJJ-WW)'
+                # Activeren van rangeslider voor weekoverzicht
+                show_xaxis_range_slider = True
+                x_tickangle = 0 # Horizontale labels voor weken, want scrollbaar
             else: # Per Maand
                 df_agg_new = filtered_df.groupby('year_month').agg(
                     total_distance=('distance_km', 'sum'),
@@ -579,7 +580,7 @@ if uploaded_file is not None and not filtered_df.empty:
                 df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
                 x_label = 'Jaar-Maand (JJJJ-MM)' # Duidelijkere label
                 show_xaxis_range_slider = False # Niet nodig voor maandoverzicht
-                x_tickangle = -45 # Schuine labels
+                x_tickangle = -45 # Schuine labels voor maanden
 
             # --- Grafieken voor Totaal en Gemiddeld Afstand ---
             col_total_dist_new, col_avg_dist_new = st.columns(2)
