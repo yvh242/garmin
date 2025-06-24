@@ -1,4 +1,3 @@
-# mijn_sportdashboard/Home.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -29,7 +28,6 @@ def load_and_process_data(uploaded_file):
     df.columns = df.columns.str.strip().str.replace('Â®', '', regex=False).str.replace('\xa0', '', regex=False)
 
     # Definieer een mapping van verwachte Nederlandse kolomnamen naar interne, schone namen
-    # Dit maakt de code robuuster voor kleine variaties in kolomnamen en makkelijker te lezen.
     column_mapping = {
         "Activiteittype": "activity_type",
         "Datum": "date",
@@ -57,44 +55,58 @@ def load_and_process_data(uploaded_file):
     # Hernoem kolommen op basis van de mapping
     df.rename(columns=column_mapping, inplace=True)
 
-    # Zorg ervoor dat kritieke kolommen bestaan, vul aan met NaN/0 indien afwezig
-    # En converteer data types
+    # --- Zorg ervoor dat alle benodigde kolommen bestaan en correct geconverteerd zijn ---
+    # Voeg kolommen toe met standaardwaarden indien ze niet bestaan
+    # Dit voorkomt KeyErrors en zorgt ervoor dat de app niet crasht.
+
+    # Date kolom
     if 'date' in df.columns:
         df['date'] = pd.to_datetime(df['date'], errors='coerce')
-        df.dropna(subset=['date'], inplace=True)
+        df.dropna(subset=['date'], inplace=True) # Verwijder rijen met ongeldige datums
     else:
-        st.warning("De 'Datum' kolom is niet gevonden. Sommige functionaliteiten werken mogelijk niet correct.")
-        df['date'] = pd.NaT # Voeg kolom toe met Not a Time
-        df['date_week_start'] = pd.NaT # Noodzakelijk voor week/maand aggregatie
+        st.warning("De 'Datum' kolom is niet gevonden. Datum-gerelateerde analyses werken mogelijk niet.")
+        df['date'] = pd.NaT # Not a Time
 
-    if 'distance_km' in df.columns:
-        df['distance_km'] = df['distance_km'].astype(str).str.replace(',', '.', regex=False).astype(float)
-        df['distance_km'].fillna(0, inplace=True)
-    else:
-        st.warning("De 'Afstand' kolom is niet gevonden. Afstandsberekeningen zijn niet mogelijk.")
-        df['distance_km'] = 0.0
+    # Numeric/Float kolommen, vul NaN met 0
+    numeric_cols = {
+        'distance_km': 0.0,
+        'calories_kcal': 0.0,
+        'steps': 0.0,
+        'avg_heart_rate_bpm': 0.0,
+        'max_heart_rate_bpm': 0.0,
+        'avg_cadence': 0.0,
+        'max_cadence': 0.0,
+        'total_elevation_gain_m': 0.0,
+        'total_elevation_loss_m': 0.0,
+        'avg_stride_length_cm': 0.0,
+        'tss': 0.0,
+        'min_temp_celsius': 0.0,
+    }
+    for col, default_val in numeric_cols.items():
+        if col in df.columns:
+            # Vervang komma's door punten voor float conversie
+            if df[col].dtype == 'object':
+                df[col] = df[col].astype(str).str.replace(',', '.', regex=False)
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(default_val)
+        else:
+            if col != 'duration_raw' and col != 'avg_pace_raw' and col != 'best_pace_raw': # Deze worden anders afgehandeld
+                st.warning(f"De kolom '{col}' is niet gevonden. Data hiervoor zal 0 zijn.")
+                df[col] = default_val
 
-    if 'calories_kcal' in df.columns:
-        df['calories_kcal'] = pd.to_numeric(df['calories_kcal'], errors='coerce').fillna(0)
-    else:
-        st.warning("De 'Calorieën' kolom is niet gevonden. Calorieberekeningen zijn niet mogelijk.")
-        df['calories_kcal'] = 0.0
-
-    if 'steps' in df.columns:
-        df['steps'] = pd.to_numeric(df['steps'], errors='coerce').fillna(0)
-    else:
-        st.warning("De 'Stappen' kolom is niet gevonden. Stappenberekeningen zijn niet mogelijk.")
-        df['steps'] = 0.0
-
-    if 'avg_heart_rate_bpm' in df.columns:
-        df['avg_heart_rate_bpm'] = pd.to_numeric(df['avg_heart_rate_bpm'], errors='coerce').fillna(0)
-    else:
-        st.warning("De 'Gem. HS' kolom is niet gevonden. Hartslag analyses zijn niet mogelijk.")
-        df['avg_heart_rate_bpm'] = 0.0
-
-    if 'activity_type' not in df.columns:
-        st.warning("De 'Activiteittype' kolom is niet gevonden. Analyses per activiteitstype zijn beperkt.")
-        df['activity_type'] = 'Onbekend' # Voeg standaard type toe
+    # String kolommen, vul NaN met 'Onbekend'
+    string_cols = {
+        'activity_type': 'Onbekend',
+        'favorite': 'Onbekend',
+        'title': 'Geen Titel',
+        'decompression': 'Onbekend',
+        'best_overall': 'Onbekend',
+    }
+    for col, default_val in string_cols.items():
+        if col not in df.columns:
+            st.warning(f"De kolom '{col}' is niet gevonden. Data hiervoor zal '{default_val}' zijn.")
+            df[col] = default_val
+        else:
+            df[col] = df[col].fillna(default_val) # Vul ook bestaande NaN's op
 
     # Tijd conversie: van HH:MM:SS string naar seconden
     def parse_time_to_seconds(time_str):
@@ -102,14 +114,14 @@ def load_and_process_data(uploaded_file):
         try:
             parts = str(time_str).split(':')
             if len(parts) == 3: return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-            elif len(parts) == 2: return int(parts[0]) * 60 + int(parts[1]) # Kan voorkomen bij tempo format
-            else: return float(time_str)
+            elif len(parts) == 2: return int(parts[0]) * 60 + int(parts[1]) # Kan voorkomen bij tempo format (MM:SS)
+            else: return float(time_str) # Voor het geval het al een nummer is
         except (ValueError, TypeError): return 0
 
     if 'duration_raw' in df.columns:
         df['duration_seconds'] = df['duration_raw'].apply(parse_time_to_seconds)
     else:
-        st.warning("De 'Tijd' kolom is niet gevonden. Duur analyses zijn niet mogelijk.")
+        st.warning("De 'Tijd' kolom (duur) is niet gevonden. Duur analyses zijn niet mogelijk.")
         df['duration_seconds'] = 0.0
 
     # Tempo conversie: van MM:SS string naar seconden per eenheid
@@ -124,24 +136,26 @@ def load_and_process_data(uploaded_file):
     if 'avg_pace_raw' in df.columns:
         df['avg_pace_sec_per_km'] = df['avg_pace_raw'].apply(parse_pace_to_seconds_per_unit)
     else:
-        df['avg_pace_sec_per_km'] = 0.0 # Voeg kolom toe met default waarde
+        st.warning("De 'Gemiddeld tempo' kolom is niet gevonden.")
+        df['avg_pace_sec_per_km'] = 0.0
 
     if 'best_pace_raw' in df.columns:
         df['best_pace_sec_per_km'] = df['best_pace_raw'].apply(parse_pace_to_seconds_per_unit)
     else:
-        df['best_pace_sec_per_km'] = 0.0 # Voeg kolom toe met default waarde
+        st.warning("De 'Beste tempo' kolom is niet gevonden.")
+        df['best_pace_sec_per_km'] = 0.0
 
-
-    # Voeg week- en maandkolommen toe voor aggregatie
-    if 'date' in df.columns and not df['date'].empty:
+    # Voeg week- en maandkolommen toe voor aggregatie als de 'date' kolom geldig is
+    if not df['date'].empty and df['date'].notna().any():
         df['year_week'] = df['date'].dt.strftime('%Y-%W')
         df['year_month'] = df['date'].dt.strftime('%Y-%m')
         # Bepaal het begin van de week voor elke datum, handig voor x-as in grafieken
         df['date_week_start'] = df['date'].apply(lambda x: x - timedelta(days=x.weekday()))
     else:
+        st.warning("Geen geldige datums gevonden na verwerking. Tijd-gebaseerde aggregaties zijn beperkt.")
         df['year_week'] = 'Onbekend'
         df['year_month'] = 'Onbekend'
-        df['date_week_start'] = pd.NaT # Default indien datum ontbreekt
+        df['date_week_start'] = pd.NaT
 
     return df
 
@@ -175,12 +189,16 @@ with st.sidebar:
             # Datum filter
             st.header("Filter op datum")
             # Zorg ervoor dat de datums binnen het bereik van de data liggen
-            if 'date' in df_full.columns and not df_full['date'].empty and pd.notna(df_full['date'].min()):
-                min_date_data = df_full['date'].min().date()
-                max_date_data = df_full['date'].max().date()
+            # Check for NaT values before min()/max()
+            valid_dates = df_full['date'].dropna()
+            if not valid_dates.empty:
+                min_date_data = valid_dates.min().date()
+                max_date_data = valid_dates.max().date()
             else:
+                st.warning("Geen geldige datums gevonden in het bestand. Datumfilter is uitgeschakeld.")
                 min_date_data = datetime.now().date() - timedelta(days=30)
                 max_date_data = datetime.now().date()
+
 
             col_start_date, col_end_date = st.columns(2)
             with col_start_date:
@@ -192,16 +210,19 @@ with st.sidebar:
                 st.error("Fout: De 'Tot' datum moet na of gelijk zijn aan de 'Vanaf' datum.")
                 filtered_df = pd.DataFrame() # Leeg dataframe om fouten te voorkomen
             else:
-                filtered_df = df_full[(df_full['date'].dt.date >= start_date) & (df_full['date'].dt.date <= end_date)].copy() # .copy() om SettingWithCopyWarning te voorkomen
-
-            # Sla de geselecteerde datums op in session_state voor gebruik in tabs
-            st.session_state.start_date_filter = start_date
-            st.session_state.end_date_filter = end_date
+                # Filter alleen op rijen waar de datum geldig is
+                filtered_df = df_full[
+                    df_full['date'].notna() & # Zorg ervoor dat de datum geen NaT is
+                    (df_full['date'].dt.date >= start_date) &
+                    (df_full['date'].dt.date <= end_date)
+                ].copy() # .copy() om SettingWithCopyWarning te voorkomen
 
             # Activiteittype filter
             st.header("Filter op Activiteittype")
             if 'activity_type' in filtered_df.columns and not filtered_df.empty:
-                all_activity_types = ['Alle'] + sorted(filtered_df['activity_type'].unique().tolist())
+                # Zorg ervoor dat er geen lege strings of NaN's in unique() komen
+                unique_activities = filtered_df['activity_type'].dropna().unique().tolist()
+                all_activity_types = ['Alle'] + sorted(unique_activities)
                 selected_activity_types = st.multiselect(
                     "Selecteer activiteittypen",
                     options=all_activity_types,
@@ -215,6 +236,8 @@ with st.sidebar:
 
             if filtered_df.empty and df_full is not None:
                 st.warning("Geen gegevens beschikbaar voor de geselecteerde filters. Pas de filters aan.")
+        else:
+            st.info("Upload een Excel- of CSV-bestand met je sportactiviteiten om het dashboard te genereren. Zorg ervoor dat de kolomnamen correct zijn.")
     else:
         st.info("Upload een Excel- of CSV-bestand met je sportactiviteiten om het dashboard te genereren. Zorg ervoor dat de kolomnamen correct zijn.")
 
@@ -258,6 +281,290 @@ if uploaded_file is not None and not filtered_df.empty:
 
         col_dist_time, col_dur_time = st.columns(2)
 
-        with col_dist_time:
-            st.subheader("Afstand over tijd")
-            df_daily_distance = filtered_df.groupby('date')['distance_km'].sum().reset_index()
+        # Controleer of de benodigde kolommen bestaan en data bevatten
+        if 'date' in filtered_df.columns and 'distance_km' in filtered_df.columns and filtered_df['date'].notna().any():
+            with col_dist_time:
+                st.subheader("Afstand over tijd")
+                df_daily_distance = filtered_df.groupby('date')['distance_km'].sum().reset_index()
+                fig_distance_time = px.line(
+                    df_daily_distance,
+                    x='date',
+                    y='distance_km',
+                    title='Totale Afstand per Dag',
+                    labels={'distance_km': 'Afstand (km)', 'date': 'Datum'},
+                    template="plotly_dark"
+                )
+                fig_distance_time.update_traces(mode='lines+markers', marker_size=5)
+                st.plotly_chart(fig_distance_time, use_container_width=True)
+        else:
+            with col_dist_time:
+                st.info("Niet genoeg data om 'Afstand over tijd' te tonen.")
+
+        if 'date' in filtered_df.columns and 'duration_seconds' in filtered_df.columns and filtered_df['date'].notna().any():
+            with col_dur_time:
+                st.subheader("Duur over tijd")
+                df_daily_duration = filtered_df.groupby('date')['duration_seconds'].sum().reset_index()
+                df_daily_duration['Tijd (HH:MM:SS)'] = df_daily_duration['duration_seconds'].apply(format_duration)
+                fig_duration_time = px.line(
+                    df_daily_duration,
+                    x='date',
+                    y='duration_seconds',
+                    title='Totale Duur per Dag',
+                    labels={'duration_seconds': 'Duur (seconden)', 'date': 'Datum'},
+                    template="plotly_dark",
+                    hover_data={'duration_seconds':False, 'Tijd (HH:MM:SS)':True} # Toon geformatteerde duur
+                )
+                fig_duration_time.update_traces(mode='lines+markers', marker_size=5)
+                st.plotly_chart(fig_duration_time, use_container_width=True)
+        else:
+            with col_dur_time:
+                st.info("Niet genoeg data om 'Duur over tijd' te tonen.")
+
+
+    with tab2:
+        st.header("Tempo en Hartslag Analyse")
+        st.markdown("Inzichten in je prestatie-indicatoren zoals tempo en hartslag.")
+
+        col_pace, col_hr = st.columns(2)
+
+        if 'avg_pace_sec_per_km' in filtered_df.columns and 'activity_type' in filtered_df.columns:
+            with col_pace:
+                st.subheader("Gemiddeld Tempo per Activiteit")
+                # Filter rijen waar avg_pace_sec_per_km 0 is als dit niet representatief is
+                df_pace_filtered = filtered_df[filtered_df['avg_pace_sec_per_km'] > 0]
+                if not df_pace_filtered.empty:
+                    df_pace_filtered['Gemiddeld tempo Display'] = df_pace_filtered['avg_pace_sec_per_km'].apply(lambda x: f"{int(x // 60):02d}:{int(x % 60):02d}")
+                    fig_pace_dist = px.box(
+                        df_pace_filtered,
+                        x='activity_type',
+                        y='avg_pace_sec_per_km',
+                        title='Distributie van Gemiddeld Tempo per Activiteittype',
+                        labels={'avg_pace_sec_per_km': 'Gemiddeld Tempo (sec/km)'},
+                        template="plotly_dark",
+                        color='activity_type'
+                    )
+                    st.plotly_chart(fig_pace_dist, use_container_width=True)
+                else:
+                    st.info("Tempo data niet beschikbaar voor analyse of alle waarden zijn 0.")
+        else:
+            with col_pace:
+                st.info("Tempo data niet beschikbaar voor analyse.")
+
+        if 'avg_heart_rate_bpm' in filtered_df.columns and 'activity_type' in filtered_df.columns:
+            with col_hr:
+                st.subheader("Gemiddelde Hartslag per Activiteit")
+                df_hr_filtered = filtered_df[filtered_df['avg_heart_rate_bpm'] > 0]
+                if not df_hr_filtered.empty:
+                    fig_hr_dist = px.box(
+                        df_hr_filtered,
+                        x='activity_type',
+                        y='avg_heart_rate_bpm',
+                        title='Distributie van Gemiddelde Hartslag per Activiteittype',
+                        labels={'avg_heart_rate_bpm': 'Gemiddelde Hartslag (bpm)'},
+                        template="plotly_dark",
+                        color='activity_type'
+                    )
+                    st.plotly_chart(fig_hr_dist, use_container_width=True)
+                else:
+                    st.info("Hartslag data niet beschikbaar voor analyse of alle waarden zijn 0.")
+        else:
+            with col_hr:
+                st.info("Hartslag data niet beschikbaar voor analyse.")
+
+
+        st.subheader("Afstand vs. Hartslag per Activiteit")
+        if ('distance_km' in filtered_df.columns and 'avg_heart_rate_bpm' in filtered_df.columns and
+            filtered_df['distance_km'].sum() > 0 and filtered_df['avg_heart_rate_bpm'].sum() > 0):
+            fig_scatter_hr = px.scatter(
+                filtered_df,
+                x='distance_km',
+                y='avg_heart_rate_bpm',
+                color='activity_type',
+                size='duration_seconds', # Grootte van de stip gebaseerd op duur
+                hover_name='title',
+                title='Afstand vs. Gemiddelde Hartslag',
+                labels={'distance_km': 'Afstand (km)', 'avg_heart_rate_bpm': 'Gemiddelde Hartslag (bpm)'},
+                template="plotly_dark"
+            )
+            st.plotly_chart(fig_scatter_hr, use_container_width=True)
+        else:
+            st.info("Afstand of hartslag data ontbreekt voor deze analyse.")
+
+
+    with tab3:
+        st.header("Analyse per Activiteittype")
+        st.markdown("Duik dieper in je prestaties per type activiteit.")
+
+        # Totaal afstand & Gemiddelde afstand per activiteittype
+        col_total_dist_type, col_avg_dist_type = st.columns(2)
+
+        if 'distance_km' in filtered_df.columns and 'activity_type' in filtered_df.columns and filtered_df['distance_km'].sum() > 0:
+            with col_total_dist_type:
+                st.subheader("Totale Afstand per Activiteittype")
+                df_total_distance_by_type = filtered_df.groupby('activity_type')['distance_km'].sum().reset_index()
+                df_total_distance_by_type = df_total_distance_by_type.sort_values(by='distance_km', ascending=False)
+                fig_total_distance_type = px.bar(
+                    df_total_distance_by_type,
+                    x='activity_type',
+                    y='distance_km',
+                    title='Totaal Afstand per Activiteittype',
+                    labels={'distance_km': 'Totale Afstand (km)', 'activity_type': 'Activiteittype'},
+                    template="plotly_dark",
+                    color='activity_type'
+                )
+                st.plotly_chart(fig_total_distance_type, use_container_width=True)
+
+            with col_avg_dist_type:
+                st.subheader("Gemiddelde Afstand per Activiteittype")
+                df_avg_distance_by_type = filtered_df.groupby('activity_type')['distance_km'].mean().reset_index()
+                df_avg_distance_by_type = df_avg_distance_by_type.sort_values(by='distance_km', ascending=False)
+                fig_avg_distance_type = px.bar(
+                    df_avg_distance_by_type,
+                    x='activity_type',
+                    y='distance_km',
+                    title='Gemiddelde Afstand per Activiteittype',
+                    labels={'distance_km': 'Gemiddelde Afstand (km)', 'activity_type': 'Activiteittype'},
+                    template="plotly_dark",
+                    color='activity_type'
+                )
+                st.plotly_chart(fig_avg_distance_type, use_container_width=True)
+        else:
+            st.info("Afstand data ontbreekt voor deze analyse.")
+
+        # Calorieën en Stappen per activiteittype
+        col_calories_type, col_steps_type = st.columns(2)
+
+        if 'calories_kcal' in filtered_df.columns and 'activity_type' in filtered_df.columns and filtered_df['calories_kcal'].sum() > 0:
+            with col_calories_type:
+                st.subheader("Totaal Calorieën per Activiteittype")
+                df_total_calories_by_type = filtered_df.groupby('activity_type')['calories_kcal'].sum().reset_index()
+                df_total_calories_by_type = df_total_calories_by_type.sort_values(by='calories_kcal', ascending=False)
+                fig_calories_type = px.pie(
+                    df_total_calories_by_type,
+                    values='calories_kcal',
+                    names='activity_type',
+                    title='Verdeling Calorieën per Activiteittype',
+                    template="plotly_dark",
+                    hole=0.4 # Maak er een donut chart van
+                )
+                st.plotly_chart(fig_calories_type, use_container_width=True)
+        else:
+            with col_calories_type:
+                st.info("Calorieën data ontbreekt voor deze analyse.")
+
+        if 'steps' in filtered_df.columns and 'activity_type' in filtered_df.columns and filtered_df['steps'].sum() > 0:
+            with col_steps_type:
+                st.subheader("Totaal Aantal Stappen per Activiteittype")
+                df_total_steps_by_type = filtered_df.groupby('activity_type')['steps'].sum().reset_index()
+                df_total_steps_by_type = df_total_steps_by_type.sort_values(by='steps', ascending=False)
+                fig_steps_type = px.bar(
+                    df_total_steps_by_type,
+                    x='activity_type',
+                    y='steps',
+                    title='Totaal Stappen per Activiteittype',
+                    labels={'steps': 'Totaal Aantal Stappen', 'activity_type': 'Activiteittype'},
+                    template="plotly_dark",
+                    color='activity_type'
+                )
+                st.plotly_chart(fig_steps_type, use_container_width=True)
+        else:
+            with col_steps_type:
+                st.info("Stappen data ontbreekt voor deze analyse.")
+
+
+    with tab4: # Nieuw tabblad voor vergelijking per week/maand
+        st.header("Vergelijking van Afstand en Duur")
+        st.markdown("Bekijk je **gemiddelde** afstand en duur geaggregeerd.")
+
+        # Keuzemenu voor week of maand
+        aggregation_period = st.radio(
+            "Kies aggregatieperiode:",
+            ('Per Week', 'Per Maand'),
+            horizontal=True,
+            key='agg_period_radio' # Voeg een unieke key toe
+        )
+        st.markdown(f"**Toont gemiddelde waarden {aggregation_period.lower()}**")
+
+
+        # Controleer of de benodigde kolommen bestaan en data bevatten
+        if (not filtered_df.empty and
+            'distance_km' in filtered_df.columns and filtered_df['distance_km'].notna().any() and
+            'duration_seconds' in filtered_df.columns and filtered_df['duration_seconds'].notna().any() and
+            'year_week' in filtered_df.columns and filtered_df['year_week'].notna().any() and
+            'year_month' in filtered_df.columns and filtered_df['year_month'].notna().any()):
+
+            if aggregation_period == 'Per Week':
+                df_agg = filtered_df.groupby('year_week').agg(
+                    avg_distance=('distance_km', 'mean'),
+                    avg_duration=('duration_seconds', 'mean')
+                ).reset_index()
+                df_agg.columns = ['Periode', 'Gem. Afstand (km)', 'Gem. Duur (sec)']
+                df_agg['Gem. Duur (HH:MM:SS)'] = df_agg['Gem. Duur (sec)'].apply(format_duration)
+                x_label = 'Jaar-Week'
+
+            else: # Per Maand
+                df_agg = filtered_df.groupby('year_month').agg(
+                    avg_distance=('distance_km', 'mean'),
+                    avg_duration=('duration_seconds', 'mean')
+                ).reset_index()
+                df_agg.columns = ['Periode', 'Gem. Afstand (km)', 'Gem. Duur (sec)']
+                df_agg['Gem. Duur (HH:MM:SS)'] = df_agg['Gem. Duur (sec)'].apply(format_duration)
+                x_label = 'Jaar-Maand'
+
+            # --- Grafieken ---
+            col_agg_dist, col_agg_dur = st.columns(2)
+
+            with col_agg_dist:
+                st.subheader(f"Gemiddelde Afstand {aggregation_period.lower()}")
+                fig_agg_dist = px.bar(
+                    df_agg,
+                    x='Periode',
+                    y='Gem. Afstand (km)',
+                    title=f'Gemiddelde Afstand {aggregation_period.lower()}',
+                    labels={'Periode': x_label, 'Gem. Afstand (km)': 'Gemiddelde Afstand (km)'},
+                    template="plotly_dark",
+                    text_auto='.2f' # Toon waarde op de balk, 2 decimalen
+                )
+                fig_agg_dist.update_traces(textposition='outside', marker_color='#FF4B4B') # Gebruik primaire kleur
+                fig_agg_dist.update_layout(showlegend=False) # Verwijder legende
+                st.plotly_chart(fig_agg_dist, use_container_width=True)
+
+            with col_agg_dur:
+                st.subheader(f"Gemiddelde Duur {aggregation_period.lower()}")
+                fig_agg_dur = px.bar(
+                    df_agg,
+                    x='Periode',
+                    y='Gem. Duur (sec)',
+                    title=f'Gemiddelde Duur {aggregation_period.lower()}',
+                    labels={'Periode': x_label, 'Gem. Duur (sec)': 'Gemiddelde Duur (seconden)'},
+                    template="plotly_dark",
+                    text='Gem. Duur (HH:MM:SS)' # Toon geformatteerde duur op de balk
+                )
+                fig_agg_dur.update_traces(textposition='outside', marker_color='#636EFA') # Gebruik een andere standaardkleur
+                fig_agg_dur.update_layout(showlegend=False) # Verwijder legende
+                st.plotly_chart(fig_agg_dur, use_container_width=True)
+        else:
+            st.info("Niet genoeg data (afstand, duur, of geldige datums/periodes) om de vergelijking te tonen voor de geselecteerde filters.")
+
+
+    with tab5: # Ruwe Data tab
+        st.header("Ruwe Gegevens")
+        st.markdown("Hier kun je de gefilterde ruwe data bekijken en eventueel exporteren.")
+        st.dataframe(filtered_df) # Toon de volledige gefilterde DataFrame
+
+        csv_export = filtered_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download gefilterde data als CSV",
+            data=csv_export,
+            file_name="gefilterde_sportdata.csv",
+            mime="text/csv",
+        )
+
+else:
+    st.info("Upload een Excel- of CSV-bestand met je sportactiviteiten om het dashboard te genereren.")
+    st.markdown("---")
+    st.markdown("""
+        **Tip:** Zorg ervoor dat je bestand kolommen bevat zoals `Activiteittype`, `Datum`, `Afstand`, `Calorieën`, en `Tijd` voor de beste analyse.
+    """)
+    if uploaded_file is not None and df_full is not None and df_full.empty:
+        st.warning("Het geüploade bestand bevat geen leesbare gegevens.")
