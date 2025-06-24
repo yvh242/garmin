@@ -25,7 +25,7 @@ def format_duration(seconds):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 @st.cache_data(show_spinner="FIT bestand(en) inlezen en verwerken...")
-def parse_fit_file(file_bytes, activity_id, speed_threshold_kmh): # <-- NIEUW: speed_threshold_kmh als parameter
+def parse_fit_file(file_bytes, activity_id, speed_threshold_kmh):
     """
     Parses a .fit file from bytes and extracts relevant activity data.
     Returns a DataFrame with key metrics.
@@ -94,7 +94,7 @@ def parse_fit_file(file_bytes, activity_id, speed_threshold_kmh): # <-- NIEUW: s
         session_max_speed_kmh = 0
         session_total_elevation_gain_m = 0
         activity_type = "Onbekend"
-        session_total_timer_time = 0 # Behoud deze voor mogelijk latere referentie
+        session_total_timer_time = None # Initialiseer met None, niet 0
 
         for session in fit_file.get_messages('session'):
             session_dict = session.as_dict()
@@ -106,7 +106,7 @@ def parse_fit_file(file_bytes, activity_id, speed_threshold_kmh): # <-- NIEUW: s
                 session_max_speed_kmh = session_dict['max_speed'] * 3.6
             if 'total_elevation_gain' in session_dict and session_dict['total_elevation_gain'] is not None:
                  session_total_elevation_gain_m = session_dict['total_elevation_gain']
-            if 'total_timer_time' in session_dict and session_dict['total_timer_time'] is not None: # Lees total_timer_time
+            if 'total_timer_time' in session_dict and session_dict['total_timer_time'] is not None:
                 session_total_timer_time = session_dict['total_timer_time']
             break
 
@@ -114,35 +114,46 @@ def parse_fit_file(file_bytes, activity_id, speed_threshold_kmh): # <-- NIEUW: s
         df['Totale_Calorieën'] = session_calories
         df['Max_Snelheid_Activiteit'] = session_max_speed_kmh
         df['Totale_Stijging_Meters'] = session_total_elevation_gain_m
-        df['Totale_Duur_Timer_Sec'] = session_total_timer_time # <-- NIEUW: Voeg toe aan DataFrame
+        df['Totale_Duur_Timer_Sec'] = session_total_timer_time # Voeg toe aan DataFrame voor inspectie
 
         # --- Bereken 'Tijd in Beweging' ---
-        calculated_moving_time = 0 # Initialiseer met 0
+        calculated_moving_time = 0 # Initialiseer de uiteindelijke bewegingstijd
 
-        # Eerste poging: Gebruik de 'total_timer_time' uit het sessiebericht als die beschikbaar is en > 0
-        if session_total_timer_time > 0:
+        # Prioriteit 1: Gebruik de 'total_timer_time' uit het sessiebericht.
+        # Dit is vaak de meest directe meting van 'actieve tijd' door het apparaat.
+        if session_total_timer_time is not None and session_total_timer_time > 0:
             calculated_moving_time = session_total_timer_time
         
-        # Tweede poging: Als total_timer_time niet bruikbaar was, bereken dan op basis van snelheid
-        if calculated_moving_time == 0: # Alleen proberen als de timer_time 0 was of niet aanwezig
-            if 'Snelheid_kmh' in df.columns and 'DatumTijd' in df.columns and not df.empty and \
-               df['Snelheid_kmh'].dropna().any(): # Controleer of er ten minste één niet-nul snelheid is
-                
-                df['Snelheid_kmh'] = df['Snelheid_kmh'].fillna(0)
-                df['DatumTijd'] = df['DatumTijd'].fillna(method='ffill').fillna(method='bfill')
+        # Prioriteit 2: Als total_timer_time niet beschikbaar was of 0,
+        # bereken dan de bewegingstijd op basis van snelheid en tijdsverschillen.
+        if calculated_moving_time == 0:
+            if 'Snelheid_kmh' in df.columns and 'DatumTijd' in df.columns and not df.empty:
+                # Werk op een kopie om SettingWithCopyWarning te voorkomen
+                df_temp = df.copy() 
 
-                if not df['DatumTijd'].empty and df['DatumTijd'].diff().dt.total_seconds().sum() > 0:
-                    df['Is_Moving'] = df['Snelheid_kmh'] > speed_threshold_kmh
-                    df['Time_Diff_Sec'] = df['DatumTijd'].diff().dt.total_seconds().fillna(0)
+                # Vul ontbrekende snelheids- of datumtijdwaarden op om berekeningen te voorkomen
+                df_temp['Snelheid_kmh'] = df_temp['Snelheid_kmh'].fillna(0)
+                # Gebruik ffill/bfill voor DatumTijd om geldige tijdsverschillen te krijgen
+                df_temp['DatumTijd'] = df_temp['DatumTijd'].fillna(method='ffill').fillna(method='bfill')
 
-                    df['Moving_Time_Contribution_Sec'] = df.apply(
+                # Zorg ervoor dat er voldoende geldige datumtijdpunten zijn voor diff
+                if not df_temp['DatumTijd'].empty and len(df_temp['DatumTijd']) > 1:
+                    df_temp['Time_Diff_Sec'] = df_temp['DatumTijd'].diff().dt.total_seconds().fillna(0)
+
+                    # Bepaal 'Is_Moving' op basis van de snelheid drempel
+                    df_temp['Is_Moving'] = df_temp['Snelheid_kmh'] > speed_threshold_kmh
+
+                    # Tel alleen de tijdsverschillen op wanneer de sporter in beweging was
+                    moving_time_contributions = df_temp.apply(
                         lambda row: row['Time_Diff_Sec'] if row['Is_Moving'] else 0, axis=1
                     )
-                    calculated_moving_time = df['Moving_Time_Contribution_Sec'].sum()
-        
-        # Derde poging (fallback): Als alles hierboven 0 opleverde, gebruik dan de totale verstreken tijd (elapsed time)
+                    calculated_moving_time = moving_time_contributions.sum()
+
+        # Prioriteit 3 (Fallback): Als de bovenstaande methoden 0 opleverden,
+        # gebruik dan de totale verstreken tijd (elapsed time).
         if calculated_moving_time == 0 and 'Tijd_sec' in df.columns and not df['Tijd_sec'].empty:
              calculated_moving_time = df['Tijd_sec'].max()
+
 
         # Voeg de berekende totale tijd in beweging toe aan elke rij voor deze activiteit
         df['Totale_Tijd_in_Beweging_Activiteit_Sec'] = calculated_moving_time
@@ -160,16 +171,17 @@ with st.sidebar:
 
     uploaded_fit_files = st.file_uploader("Kies .fit bestand(en)", type=["fit"], accept_multiple_files=True)
 
-    # NIEUW: Slider voor drempelwaarde
+    # Slider voor drempelwaarde
     st.markdown("---")
     st.subheader("Instellingen 'Tijd in Beweging'")
+    st.markdown("Deze drempel wordt alleen gebruikt als 'Timer Time' niet in het bestand staat.")
     speed_threshold = st.slider(
         "Snelheidsdrempel voor 'in beweging' (km/u):",
         min_value=0.0,
         max_value=5.0,
         value=0.5, # Standaardwaarde
         step=0.1,
-        help="Snelheid (in km/u) waaronder activiteit als stilstand wordt beschouwd. Alleen van toepassing als 'total_timer_time' niet beschikbaar is."
+        help="Snelheid (in km/u) waaronder activiteit als stilstand wordt beschouwd."
     )
     st.markdown("---")
 
@@ -193,7 +205,6 @@ with st.sidebar:
             st.info(f"Verwerken van {len(uploaded_fit_files)} bestand(en)...")
             all_dfs = []
             for idx, uploaded_file in enumerate(uploaded_fit_files):
-                # <-- PAS HIER AAN: Geef speed_threshold door
                 df_temp = parse_fit_file(uploaded_file.read(), uploaded_file.name, speed_threshold)
                 if not df_temp.empty:
                     df_temp.attrs['original_filename'] = uploaded_file.name
@@ -202,7 +213,7 @@ with st.sidebar:
             if all_dfs:
                 st.session_state.fit_df = pd.concat(all_dfs, ignore_index=True)
                 st.session_state.fit_dfs_list = all_dfs
-                st.session_state.last_speed_threshold = speed_threshold # Sla de drempel op
+                st.session_state.last_speed_threshold = speed_threshold
                 st.success(f"{len(all_dfs)} FIT bestand(en) succesvol ingelezen!")
             else:
                 st.warning("Geen bruikbare data gevonden in de geüploade FIT bestanden.")
