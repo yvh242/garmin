@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go # <-- Nieuwe import voor go.Scattermapbox
 from fitparse import FitFile
 from datetime import datetime, timedelta
 
@@ -46,8 +47,8 @@ def parse_fit_file(file_bytes):
         # Rename common columns to a standardized format
         column_renames = {
             'timestamp': 'DatumTijd',
-            'position_lat': 'Latitude',
-            'position_long': 'Longitude',
+            'position_lat': 'Latitude_semicircles', # Raw format from FIT
+            'position_long': 'Longitude_semicircles', # Raw format from FIT
             'distance': 'Afstand_m',
             'heart_rate': 'Hartslag_bpm',
             'cadence': 'Cadans_rpm', # or spm for running
@@ -57,6 +58,18 @@ def parse_fit_file(file_bytes):
             'calories': 'Calorieën'
         }
         df.rename(columns=column_renames, inplace=True)
+
+        # Convert raw semicircles GPS to degrees
+        # 1 semicircle = 180 / 2^31 degrees
+        if 'Latitude_semicircles' in df.columns and 'Longitude_semicircles' in df.columns:
+            df['Latitude'] = df['Latitude_semicircles'] * (180 / 2**31)
+            df['Longitude'] = df['Longitude_semicircles'] * (180 / 2**31)
+            # Remove original raw columns if not needed
+            df.drop(columns=['Latitude_semicircles', 'Longitude_semicircles'], inplace=True)
+        else:
+            df['Latitude'] = pd.NA
+            df['Longitude'] = pd.NA
+
 
         # Convert to more readable units
         if 'Afstand_m' in df.columns:
@@ -80,14 +93,12 @@ def parse_fit_file(file_bytes):
             return pd.DataFrame()
 
         # Extract activity type from file metadata if possible (often not in 'record' messages)
-        # This part is often more complex as activity type might be in 'session' or 'activity' messages
-        # For simplicity, we'll try to infer or set to unknown
         activity_type = "Onbekend"
         for session in fit_file.get_messages('session'):
             session_dict = session.as_dict()
             if 'sport' in session_dict and session_dict['sport'] is not None:
                 activity_type = str(session_dict['sport']).replace('_', ' ').title()
-                break # Take the first found sport type
+                break
 
         df['Activiteitstype'] = activity_type
 
@@ -142,7 +153,7 @@ else:
     with kpi2:
         st.metric(label="Totale duur", value=format_duration(total_duration_seconds))
     with kpi3:
-        st.metric(label="Gem. Hartslag", value=f"{avg_heart_rate:,.0f} bpm" if avg_heart_rate > 0 else "N/B")
+        st.metric(label="Gem. Hartslag", value=f"{avg_heart_rate:,.0f} bpm" if avg_heart_rate > 0 and not pd.isna(avg_heart_rate) else "N/B")
     with kpi4:
         st.metric(label="Max. Snelheid", value=f"{max_speed_kmh:,.1f} km/u" if max_speed_kmh > 0 else "N/B")
 
@@ -156,71 +167,122 @@ else:
 
     st.markdown("---")
 
-    # --- Tijdreeks Grafieken ---
-    st.subheader("Prestaties over Tijd")
+    tab_performance, tab_map, tab_raw_data = st.tabs(["📊 Prestaties over Tijd", "🗺️ Activiteit Route", "📋 Ruwe Data"])
 
-    # Selectiebox voor de y-as
-    available_metrics = {
-        "Hartslag (bpm)": "Hartslag_bpm",
-        "Snelheid (km/u)": "Snelheid_kmh",
-        "Hoogte (m)": "Hoogte_m",
-        "Cadans (rpm/spm)": "Cadans_rpm",
-        "Vermogen (watts)": "Vermogen_watts",
-        "Afstand (km)": "Afstand_km"
-    }
+    with tab_performance:
+        st.subheader("Prestaties over Tijd")
+        # Selectiebox voor de y-as
+        available_metrics = {
+            "Hartslag (bpm)": "Hartslag_bpm",
+            "Snelheid (km/u)": "Snelheid_kmh",
+            "Hoogte (m)": "Hoogte_m",
+            "Cadans (rpm/spm)": "Cadans_rpm",
+            "Vermogen (watts)": "Vermogen_watts",
+            "Afstand (km)": "Afstand_km"
+        }
 
-    # Filter out metrics that are not in the DataFrame or are all zeros
-    plottable_metrics = {
-        label: col for label, col in available_metrics.items()
-        if col in df.columns and (df[col].sum() > 0 or col in ['Hoogte_m', 'Afstand_km'])
-    }
+        # Filter out metrics that are not in the DataFrame or are all zeros
+        plottable_metrics = {
+            label: col for label, col in available_metrics.items()
+            if col in df.columns and (df[col].sum() > 0 or col in ['Hoogte_m', 'Afstand_km'])
+        }
 
-    if not plottable_metrics:
-        st.warning("Niet genoeg numerieke data om grafieken te genereren.")
-    else:
-        selected_metric = st.selectbox(
-            "Selecteer een meting om te visualiseren:",
-            options=list(plottable_metrics.keys()),
-            key="metric_selection"
-        )
-
-        y_column = plottable_metrics[selected_metric]
-
-        if 'DatumTijd' in df.columns and not df.empty and not df['DatumTijd'].empty:
-            fig = px.line(
-                df,
-                x='DatumTijd',
-                y=y_column,
-                title=f'{selected_metric} over Tijd',
-                labels={'DatumTijd': 'Tijd', y_column: selected_metric},
-                template="plotly_dark",
-                line_shape='spline' # Maakt de lijnen vloeiender
-            )
-            fig.update_xaxes(rangeslider_visible=True, rangeselector=dict(
-                buttons=list([
-                    dict(count=1, label="1m", step="minute", stepmode="backward"),
-                    dict(count=5, label="5m", step="minute", stepmode="backward"),
-                    dict(count=1, label="1u", step="hour", stepmode="backward"),
-                    dict(step="all")
-                ])
-            ))
-            fig.update_layout(hovermode="x unified") # Toon alle waarden op de x-as bij hover
-            st.plotly_chart(fig, use_container_width=True)
+        if not plottable_metrics:
+            st.warning("Niet genoeg numerieke data om grafieken te genereren.")
         else:
-            st.error("Kan geen tijdreeksgrafieken genereren, 'DatumTijd' kolom ontbreekt of is leeg na verwerking.")
+            selected_metric = st.selectbox(
+                "Selecteer een meting om te visualiseren:",
+                options=list(plottable_metrics.keys()),
+                key="metric_selection"
+            )
 
-    st.markdown("---")
+            y_column = plottable_metrics[selected_metric]
 
-    # --- Gegevens voorbeelden ---
-    st.subheader("Ruwe Data Voorbeeld")
-    st.markdown("Bekijk de eerste rijen van de verwerkte data.")
-    st.dataframe(df.head())
+            if 'DatumTijd' in df.columns and not df.empty and not df['DatumTijd'].empty:
+                fig = px.line(
+                    df,
+                    x='DatumTijd',
+                    y=y_column,
+                    title=f'{selected_metric} over Tijd',
+                    labels={'DatumTijd': 'Tijd', y_column: selected_metric},
+                    template="plotly_dark",
+                    line_shape='spline' # Maakt de lijnen vloeiender
+                )
+                fig.update_xaxes(rangeslider_visible=True, rangeselector=dict(
+                    buttons=list([
+                        dict(count=1, label="1m", step="minute", stepmode="backward"),
+                        dict(count=5, label="5m", step="minute", stepmode="backward"),
+                        dict(count=1, label="1u", step="hour", stepmode="backward"),
+                        dict(step="all")
+                    ])
+                ))
+                fig.update_layout(hovermode="x unified") # Toon alle waarden op de x-as bij hover
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.error("Kan geen tijdreeksgrafieken genereren, 'DatumTijd' kolom ontbreekt of is leeg na verwerking.")
 
-    # --- Download Knop ---
-    csv_export = df.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="Download verwerkte data als CSV",
-        data=csv_export,
-        file_name="fit_data_processed.csv",
-        mime="text/csv",
-    )
+    with tab_map:
+        st.subheader("Activiteit Route op Kaart")
+        if 'Latitude' in df.columns and 'Longitude' in df.columns and df['Latitude'].notna().any() and df['Longitude'].notna().any():
+            # Filter rijen met geldige GPS-coördinaten
+            df_map = df.dropna(subset=['Latitude', 'Longitude']).copy()
+
+            if not df_map.empty:
+                # Gemiddelde positie om de kaart te centreren
+                center_lat = df_map['Latitude'].mean()
+                center_lon = df_map['Longitude'].mean()
+
+                # Maak de kaart
+                fig_map = px.line_mapbox(
+                    df_map,
+                    lat="Latitude",
+                    lon="Longitude",
+                    zoom=12, # Start zoomniveau
+                    height=500,
+                    mapbox_style="carto-positron", # Of "open-street-map", "stamen-terrain", etc.
+                    title="Afgelegde Route",
+                    hover_name="DatumTijd",
+                    color_discrete_sequence=["#FF4B4B"] # Kleur van de lijn
+                )
+
+                # Voeg eventueel start- en eindpunten toe
+                fig_map.add_trace(go.Scattermapbox(
+                    lat=[df_map['Latitude'].iloc[0]],
+                    lon=[df_map['Longitude'].iloc[0]],
+                    mode='markers',
+                    marker=go.scattermapbox.Marker(size=10, color='green', symbol='circle'),
+                    name='Startpunt',
+                    hoverinfo='name'
+                ))
+                fig_map.add_trace(go.Scattermapbox(
+                    lat=[df_map['Latitude'].iloc[-1]],
+                    lon=[df_map['Longitude'].iloc[-1]],
+                    mode='markers',
+                    marker=go.scattermapbox.Marker(size=10, color='red', symbol='circle'),
+                    name='Eindpunt',
+                    hoverinfo='name'
+                ))
+
+                fig_map.update_layout(mapbox_center={"lat": center_lat, "lon": center_lon})
+                st.plotly_chart(fig_map, use_container_width=True)
+            else:
+                st.info("Geen geldige GPS-coördinaten gevonden in het bestand om de route te tonen.")
+        else:
+            st.info("Geen GPS-coördinaten (Latitude/Longitude) beschikbaar in dit FIT-bestand om de route te tonen.")
+
+
+    with tab_raw_data: # Ruwe Data tab
+        st.header("Ruwe Gegevens")
+        st.markdown("Hier kun je de verwerkte ruwe data bekijken en eventueel exporteren.")
+        if not st.session_state.fit_df.empty:
+            st.dataframe(st.session_state.fit_df)
+
+            csv_export = st.session_state.fit_df.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Download verwerkte data als CSV",
+                data=csv_export,
+                file_name="fit_data_processed.csv",
+                mime="text/csv",
+            )
+        else:
+            st.info("Geen verwerkte ruwe data beschikbaar.")
