@@ -74,14 +74,13 @@ def parse_fit_file(file_bytes, activity_id):
         if 'Snelheid_ms' in df.columns:
             df['Snelheid_kmh'] = df['Snelheid_ms'] * 3.6
         else:
-            df['Snelheid_kmh'] = 0.0
+            df['Snelheid_kmh'] = 0.0 # Default to 0 if speed is not available
 
         # Ensure datetime column is correct
         if 'DatumTijd' in df.columns:
             df['DatumTijd'] = pd.to_datetime(df['DatumTijd'], errors='coerce')
             df.dropna(subset=['DatumTijd'], inplace=True) # Drop rows where datetime is invalid
             df = df.sort_values(by='DatumTijd').reset_index(drop=True)
-            # Re-introduce Tijd_sec based on elapsed time from start of records
             df['Tijd_sec'] = (df['DatumTijd'] - df['DatumTijd'].iloc[0]).dt.total_seconds()
         else:
             st.error("Geen 'timestamp' data gevonden in het FIT-bestand. Kan geen dashboard genereren.")
@@ -112,6 +111,25 @@ def parse_fit_file(file_bytes, activity_id):
         df['Totale_Calorieën'] = session_calories
         df['Max_Snelheid_Activiteit'] = session_max_speed_kmh
         df['Totale_Stijging_Meters'] = session_total_elevation_gain_m
+
+        # --- NIEUW: Bereken 'Tijd in Beweging' ---
+        SPEED_THRESHOLD_KMH = 0.5 # Drempelwaarde voor stilstand in km/u
+
+        if 'Snelheid_kmh' in df.columns and not df['Snelheid_kmh'].isnull().all():
+            df['Is_Moving'] = df['Snelheid_kmh'] > SPEED_THRESHOLD_KMH
+            df['Time_Diff_Sec'] = df['DatumTijd'].diff().dt.total_seconds().fillna(0)
+            df['Moving_Time_Contribution_Sec'] = df.apply(
+                lambda row: row['Time_Diff_Sec'] if row['Is_Moving'] else 0, axis=1
+            )
+            df['Tijd_in_Beweging_Sec'] = df['Moving_Time_Contribution_Sec'].cumsum().fillna(0)
+            total_moving_time_for_activity = df['Tijd_in_Beweging_Sec'].max() if not df['Tijd_in_Beweging_Sec'].empty else 0
+        else:
+            # Fallback als snelheid niet beschikbaar is: gebruik de totale verstreken tijd
+            total_moving_time_for_activity = df['Tijd_sec'].max() if 'Tijd_sec' in df.columns else 0
+
+
+        # Voeg de berekende totale tijd in beweging toe aan elke rij voor deze activiteit
+        df['Totale_Tijd_in_Beweging_Activiteit_Sec'] = total_moving_time_for_activity
 
         return df
 
@@ -232,20 +250,21 @@ else:
             summary_df = df.groupby('Activity_ID').agg(
                 Datum=('DatumTijd', lambda x: x.min().strftime('%Y-%m-%d') if not x.empty else 'N/B'),
                 Totale_Afstand_km=('Afstand_km', 'max'),
-                Totale_Duur_sec=('Tijd_sec', 'max'), # Using max of Tijd_sec (Elapsed Time) for duration
+                # AANGEPAST: Gebruik de berekende "Tijd in Beweging"
+                Totale_Duur_Sec=('Totale_Tijd_in_Beweging_Activiteit_Sec', 'first'),
                 Gemiddelde_Hartslag=('Hartslag_bpm', lambda x: x[x > 0].mean() if not x.empty else 0),
                 Maximale_Hartslag=('Hartslag_bpm', 'max'),
                 Activiteitstype=('Activiteitstype', 'first')
             ).reset_index()
 
-            # Calculate average speed based on total distance and elapsed duration
+            # Calculate average speed based on total distance and accurate moving duration
             summary_df['Gemiddelde_Snelheid_kmh'] = summary_df.apply(
-                lambda row: (row['Totale_Afstand_km'] / (row['Totale_Duur_sec'] / 3600)) if row['Totale_Duur_sec'] > 0 else 0,
+                lambda row: (row['Totale_Afstand_km'] / (row['Totale_Duur_Sec'] / 3600)) if row['Totale_Duur_Sec'] > 0 else 0,
                 axis=1
             )
 
-            # Format the total duration
-            summary_df['Totale_Duur'] = summary_df['Totale_Duur_sec'].apply(format_duration)
+            # Format the total duration (now "Tijd in Beweging")
+            summary_df['Totale_Duur'] = summary_df['Totale_Duur_Sec'].apply(format_duration)
 
             # Round numerical columns and ensure proper display
             summary_df['Totale_Afstand_km'] = summary_df['Totale_Afstand_km'].round(2)
@@ -271,7 +290,7 @@ else:
                 'Gemiddelde_Snelheid_kmh': 'Gem. Snelheid (km/u)',
                 'Gemiddelde_Hartslag': 'Gem. Hartslag (bpm)',
                 'Maximale_Hartslag': 'Max. Hartslag (bpm)',
-                'Totale_Duur': 'Duur (UU:MM:SS)'
+                'Totale_Duur': 'Duur (UU:MM:SS)' # This is now "Tijd in Beweging"
             })[display_columns].copy()
 
 
