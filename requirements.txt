@@ -2,3 +2,4 @@ streamlit
 pandas
 openpyxl # Nodig voor het lezen van .xlsx bestanden
 plotly   # Voor interactieve en mooie grafieken
+fitparse
