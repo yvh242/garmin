@@ -249,7 +249,7 @@ if uploaded_file is not None and not filtered_df.empty:
         "💓 Tempo & Hartslag",
         "🏃‍♀️ Activiteitentypen",
         "📈 Vergelijking",
-        "🗓️ Overzicht per Periode", # NIEUW TABBLAD
+        "🗓️ Overzicht per Periode",
         "📋 Ruwe Data"
     ])
 
@@ -540,13 +540,23 @@ if uploaded_file is not None and not filtered_df.empty:
         st.markdown("Kies zelf of je de totale en gemiddelde waarden per **week** of per **maand** wilt bekijken.")
 
         # Keuzemenu voor week of maand
-        aggregation_period_new_tab = st.radio(
-            "Selecteer periode voor overzicht:",
-            ('Per Week', 'Per Maand'),
-            horizontal=True,
-            key='new_tab_agg_period'
-        )
-        st.markdown(f"**Toont overzicht {aggregation_period_new_tab.lower()}**")
+        col_period_choice, col_display_choice = st.columns([1, 1])
+        with col_period_choice:
+            aggregation_period_new_tab = st.radio(
+                "Gegevens aggregeren per:",
+                ('Per Week', 'Per Maand'),
+                horizontal=True,
+                key='new_tab_agg_period'
+            )
+        with col_display_choice:
+            display_type = st.radio(
+                "Weergave type:",
+                ('Grafiek', 'Tabel'),
+                horizontal=True,
+                key='new_tab_display_type'
+            )
+
+        st.markdown(f"**Toont {display_type.lower()} overzicht {aggregation_period_new_tab.lower()}**")
 
         if (not filtered_df.empty and
             'distance_km' in filtered_df.columns and filtered_df['distance_km'].notna().any() and
@@ -565,9 +575,8 @@ if uploaded_file is not None and not filtered_df.empty:
                 df_agg_new['Totale Duur (HH:MM:SS)'] = df_agg_new['Totale Duur (sec)'].apply(format_duration)
                 df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
                 x_label = 'Jaar-Week (JJJJ-WW)'
-                # Activeren van rangeslider voor weekoverzicht
                 show_xaxis_range_slider = True
-                x_tickangle = 0 # Horizontale labels voor weken, want scrollbaar
+                x_tickangle = 0 # Horizontale labels voor weken
             else: # Per Maand
                 df_agg_new = filtered_df.groupby('year_month').agg(
                     total_distance=('distance_km', 'sum'),
@@ -578,123 +587,138 @@ if uploaded_file is not None and not filtered_df.empty:
                 df_agg_new.columns = ['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (sec)', 'Gem. Duur (sec)']
                 df_agg_new['Totale Duur (HH:MM:SS)'] = df_agg_new['Totale Duur (sec)'].apply(format_duration)
                 df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
-                x_label = 'Jaar-Maand (JJJJ-MM)' # Duidelijkere label
-                show_xaxis_range_slider = False # Niet nodig voor maandoverzicht
+                x_label = 'Jaar-Maand (JJJJ-MM)'
+                show_xaxis_range_slider = False
                 x_tickangle = -45 # Schuine labels voor maanden
 
-            # --- Grafieken voor Totaal en Gemiddeld Afstand ---
-            col_total_dist_new, col_avg_dist_new = st.columns(2)
+            if display_type == 'Grafiek':
+                # --- Grafieken voor Totaal en Gemiddeld Afstand ---
+                col_total_dist_new, col_avg_dist_new = st.columns(2)
 
-            with col_total_dist_new:
-                st.subheader(f"Totale Afstand {aggregation_period_new_tab.lower()}")
-                fig_total_dist_new = px.bar(
-                    df_agg_new,
-                    x='Periode',
-                    y='Totaal Afstand (km)',
-                    title=f'Totale Afstand {aggregation_period_new_tab.lower()}',
-                    labels={'Periode': x_label, 'Totaal Afstand (km)': 'Totaal Afstand (km)'},
-                    template="plotly_dark",
-                    text_auto='.2f'
-                )
-                fig_total_dist_new.update_traces(textposition='outside', marker_color='#FF4B4B')
-                fig_total_dist_new.update_layout(showlegend=False)
-                fig_total_dist_new.update_xaxes(
-                    tickangle=x_tickangle,
-                    rangeslider_visible=show_xaxis_range_slider,
-                    rangeselector=dict(
-                        buttons=list([
-                            dict(count=1, label="1m", step="month", stepmode="backward"),
-                            dict(count=6, label="6m", step="month", stepmode="backward"),
-                            dict(count=1, label="1j", step="year", stepmode="backward"),
-                            dict(step="all")
-                        ])
-                    ) if show_xaxis_range_slider else None
-                )
-                st.plotly_chart(fig_total_dist_new, use_container_width=True)
+                with col_total_dist_new:
+                    st.subheader(f"Totale Afstand {aggregation_period_new_tab.lower()}")
+                    fig_total_dist_new = px.bar(
+                        df_agg_new,
+                        x='Periode',
+                        y='Totaal Afstand (km)',
+                        title=f'Totale Afstand {aggregation_period_new_tab.lower()}',
+                        labels={'Periode': x_label, 'Totaal Afstand (km)': 'Totaal Afstand (km)'},
+                        template="plotly_dark",
+                        text_auto='.2f'
+                    )
+                    fig_total_dist_new.update_traces(textposition='outside', marker_color='#FF4B4B')
+                    fig_total_dist_new.update_layout(showlegend=False)
+                    fig_total_dist_new.update_xaxes(
+                        tickangle=x_tickangle,
+                        rangeslider_visible=show_xaxis_range_slider,
+                        rangeselector=dict(
+                            buttons=list([
+                                dict(count=1, label="1m", step="month", stepmode="backward"),
+                                dict(count=6, label="6m", step="month", stepmode="backward"),
+                                dict(count=1, label="1j", step="year", stepmode="backward"),
+                                dict(step="all")
+                            ])
+                        ) if show_xaxis_range_slider else None
+                    )
+                    st.plotly_chart(fig_total_dist_new, use_container_width=True)
 
-            with col_avg_dist_new:
-                st.subheader(f"Gemiddelde Afstand {aggregation_period_new_tab.lower()}")
-                fig_avg_dist_new = px.bar(
-                    df_agg_new,
-                    x='Periode',
-                    y='Gem. Afstand (km)',
-                    title=f'Gemiddelde Afstand {aggregation_period_new_tab.lower()}',
-                    labels={'Periode': x_label, 'Gem. Afstand (km)': 'Gemiddelde Afstand (km)'},
-                    template="plotly_dark",
-                    text_auto='.2f'
-                )
-                fig_avg_dist_new.update_traces(textposition='outside', marker_color='#636EFA')
-                fig_avg_dist_new.update_layout(showlegend=False)
-                fig_avg_dist_new.update_xaxes(
-                    tickangle=x_tickangle,
-                    rangeslider_visible=show_xaxis_range_slider,
-                    rangeselector=dict(
-                        buttons=list([
-                            dict(count=1, label="1m", step="month", stepmode="backward"),
-                            dict(count=6, label="6m", step="month", stepmode="backward"),
-                            dict(count=1, label="1j", step="year", stepmode="backward"),
-                            dict(step="all")
-                        ])
-                    ) if show_xaxis_range_slider else None
-                )
-                st.plotly_chart(fig_avg_dist_new, use_container_width=True)
+                with col_avg_dist_new:
+                    st.subheader(f"Gemiddelde Afstand {aggregation_period_new_tab.lower()}")
+                    fig_avg_dist_new = px.bar(
+                        df_agg_new,
+                        x='Periode',
+                        y='Gem. Afstand (km)',
+                        title=f'Gemiddelde Afstand {aggregation_period_new_tab.lower()}',
+                        labels={'Periode': x_label, 'Gem. Afstand (km)': 'Gemiddelde Afstand (km)'},
+                        template="plotly_dark",
+                        text_auto='.2f'
+                    )
+                    fig_avg_dist_new.update_traces(textposition='outside', marker_color='#636EFA')
+                    fig_avg_dist_new.update_layout(showlegend=False)
+                    fig_avg_dist_new.update_xaxes(
+                        tickangle=x_tickangle,
+                        rangeslider_visible=show_xaxis_range_slider,
+                        rangeselector=dict(
+                            buttons=list([
+                                dict(count=1, label="1m", step="month", stepmode="backward"),
+                                dict(count=6, label="6m", step="month", stepmode="backward"),
+                                dict(count=1, label="1j", step="year", stepmode="backward"),
+                                dict(step="all")
+                            ])
+                        ) if show_xaxis_range_slider else None
+                    )
+                    st.plotly_chart(fig_avg_dist_new, use_container_width=True)
 
-            # --- Grafieken voor Totaal en Gemiddeld Duur ---
-            col_total_dur_new, col_avg_dur_new = st.columns(2)
+                # --- Grafieken voor Totaal en Gemiddeld Duur ---
+                col_total_dur_new, col_avg_dur_new = st.columns(2)
 
-            with col_total_dur_new:
-                st.subheader(f"Totale Duur {aggregation_period_new_tab.lower()}")
-                fig_total_dur_new = px.bar(
-                    df_agg_new,
-                    x='Periode',
-                    y='Totale Duur (sec)',
-                    title=f'Totale Duur {aggregation_period_new_tab.lower()}',
-                    labels={'Periode': x_label, 'Totale Duur (sec)': 'Totale Duur (seconden)'},
-                    template="plotly_dark",
-                    text='Totale Duur (HH:MM:SS)'
-                )
-                fig_total_dur_new.update_traces(textposition='outside', marker_color='#00CC96')
-                fig_total_dur_new.update_layout(showlegend=False)
-                fig_total_dur_new.update_xaxes(
-                    tickangle=x_tickangle,
-                    rangeslider_visible=show_xaxis_range_slider,
-                    rangeselector=dict(
-                        buttons=list([
-                            dict(count=1, label="1m", step="month", stepmode="backward"),
-                            dict(count=6, label="6m", step="month", stepmode="backward"),
-                            dict(count=1, label="1j", step="year", stepmode="backward"),
-                            dict(step="all")
-                        ])
-                    ) if show_xaxis_range_slider else None
-                )
-                st.plotly_chart(fig_total_dur_new, use_container_width=True)
+                with col_total_dur_new:
+                    st.subheader(f"Totale Duur {aggregation_period_new_tab.lower()}")
+                    fig_total_dur_new = px.bar(
+                        df_agg_new,
+                        x='Periode',
+                        y='Totale Duur (sec)',
+                        title=f'Totale Duur {aggregation_period_new_tab.lower()}',
+                        labels={'Periode': x_label, 'Totale Duur (sec)': 'Totale Duur (seconden)'},
+                        template="plotly_dark",
+                        text='Totale Duur (HH:MM:SS)'
+                    )
+                    fig_total_dur_new.update_traces(textposition='outside', marker_color='#00CC96')
+                    fig_total_dur_new.update_layout(showlegend=False)
+                    fig_total_dur_new.update_xaxes(
+                        tickangle=x_tickangle,
+                        rangeslider_visible=show_xaxis_range_slider,
+                        rangeselector=dict(
+                            buttons=list([
+                                dict(count=1, label="1m", step="month", stepmode="backward"),
+                                dict(count=6, label="6m", step="month", stepmode="backward"),
+                                dict(count=1, label="1j", step="year", stepmode="backward"),
+                                dict(step="all")
+                            ])
+                        ) if show_xaxis_range_slider else None
+                    )
+                    st.plotly_chart(fig_total_dur_new, use_container_width=True)
 
-            with col_avg_dur_new:
-                st.subheader(f"Gemiddelde Duur {aggregation_period_new_tab.lower()}")
-                fig_avg_dur_new = px.bar(
-                    df_agg_new,
-                    x='Periode',
-                    y='Gem. Duur (sec)',
-                    title=f'Gemiddelde Duur {aggregation_period_new_tab.lower()}',
-                    labels={'Periode': x_label, 'Gem. Duur (sec)': 'Gemiddelde Duur (seconden)'},
-                    template="plotly_dark",
-                    text='Gem. Duur (HH:MM:SS)'
+                with col_avg_dur_new:
+                    st.subheader(f"Gemiddelde Duur {aggregation_period_new_tab.lower()}")
+                    fig_avg_dur_new = px.bar(
+                        df_agg_new,
+                        x='Periode',
+                        y='Gem. Duur (sec)',
+                        title=f'Gemiddelde Duur {aggregation_period_new_tab.lower()}',
+                        labels={'Periode': x_label, 'Gem. Duur (sec)': 'Gemiddelde Duur (seconden)'},
+                        template="plotly_dark",
+                        text='Gem. Duur (HH:MM:SS)'
+                    )
+                    fig_avg_dur_new.update_traces(textposition='outside', marker_color='#EF553B')
+                    fig_avg_dur_new.update_layout(showlegend=False)
+                    fig_avg_dur_new.update_xaxes(
+                        tickangle=x_tickangle,
+                        rangeslider_visible=show_xaxis_range_slider,
+                        rangeselector=dict(
+                            buttons=list([
+                                dict(count=1, label="1m", step="month", stepmode="backward"),
+                                dict(count=6, label="6m", step="month", stepmode="backward"),
+                                dict(count=1, label="1j", step="year", stepmode="backward"),
+                                dict(step="all")
+                            ])
+                        ) if show_xaxis_range_slider else None
+                    )
+                    st.plotly_chart(fig_avg_dur_new, use_container_width=True)
+            else: # display_type == 'Tabel'
+                st.subheader(f"Overzichtstabel {aggregation_period_new_tab.lower()}")
+                # Zorg ervoor dat de 'Periode' kolom goed gesorteerd is voor de tabel
+                df_agg_new_display = df_agg_new[['Periode', 'Totaal Afstand (km)', 'Gem. Afstand (km)', 'Totale Duur (HH:MM:SS)', 'Gem. Duur (HH:MM:SS)']].copy()
+                st.dataframe(df_agg_new_display, use_container_width=True)
+
+                csv_export_agg = df_agg_new_display.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label=f"Download {aggregation_period_new_tab.lower()} overzicht als CSV",
+                    data=csv_export_agg,
+                    file_name=f"sportoverzicht_{aggregation_period_new_tab.lower().replace(' ', '_')}.csv",
+                    mime="text/csv",
                 )
-                fig_avg_dur_new.update_traces(textposition='outside', marker_color='#EF553B')
-                fig_avg_dur_new.update_layout(showlegend=False)
-                fig_avg_dur_new.update_xaxes(
-                    tickangle=x_tickangle,
-                    rangeslider_visible=show_xaxis_range_slider,
-                    rangeselector=dict(
-                        buttons=list([
-                            dict(count=1, label="1m", step="month", stepmode="backward"),
-                            dict(count=6, label="6m", step="month", stepmode="backward"),
-                            dict(count=1, label="1j", step="year", stepmode="backward"),
-                            dict(step="all")
-                        ])
-                    ) if show_xaxis_range_slider else None
-                )
-                st.plotly_chart(fig_avg_dur_new, use_container_width=True)
+
         else:
             st.info("Niet genoeg data (afstand, duur, of geldige datums/periodes) om het overzicht te tonen voor de geselecteerde filters.")
 
