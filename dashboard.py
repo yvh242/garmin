@@ -218,7 +218,7 @@ with st.sidebar:
         st.info("Upload een Excel- of CSV-bestand met je sportactiviteiten om het dashboard te genereren. Zorg ervoor dat de kolomnamen correct zijn.")
 
 # --- Hoofd Dashboard Content ---
-st.title("🏃‍♂️ Je Persoonlijke Sportactiviteiten Dashboard")
+st.title("🏃‍♂️ Sportactiviteiten Dashboard")
 st.markdown("Visualiseer en analyseer je prestaties met dit interactieve dashboard. Upload je gegevens en ontdek je vooruitgang!")
 
 if uploaded_file is not None and not filtered_df.empty:
