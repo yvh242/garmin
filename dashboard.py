@@ -47,7 +47,8 @@ def process_mapped_data(df, column_mapping_user):
     # Gebruik de user's mapping om de kolommen te hernoemen naar de verwachte interne namen
     rename_dict = {}
     for internal_name, user_col_name in column_mapping_user.items():
-        if user_col_name and user_col_name in df_processed.columns: # Controleer of de user_col_name echt bestaat
+        # Belangrijk: Controleer of de user_col_name daadwerkelijk bestaat in de _originele_ (raw_df) kolommen
+        if user_col_name and user_col_name in df_processed.columns:
             rename_dict[user_col_name] = internal_name
         else:
             # Als een kolom niet gemapt is of niet bestaat, voeg een placeholder toe
@@ -93,7 +94,7 @@ def process_mapped_data(df, column_mapping_user):
             parts = str(time_str).split(':')
             if len(parts) == 3: return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
             elif len(parts) == 2: return int(parts[0]) * 60 + int(parts[1])
-            else: return float(time_str)
+            else: return float(time_str) # Voor het geval het al seconden zijn
         except (ValueError, TypeError): return 0
 
     if 'duration_raw' in df_processed.columns:
@@ -134,6 +135,14 @@ def process_mapped_data(df, column_mapping_user):
 
     return df_processed
 
+# --- Initialiseer session_state variabelen indien nodig ---
+if 'raw_df' not in st.session_state:
+    st.session_state.raw_df = pd.DataFrame()
+if 'processed_df' not in st.session_state:
+    st.session_state.processed_df = pd.DataFrame()
+if 'column_mapping_user' not in st.session_state:
+    st.session_state.column_mapping_user = {}
+
 # --- Zijbalk voor bestand uploaden en filters ---
 with st.sidebar:
     st.image("https://www.streamlit.io/images/brand/streamlit-logo-secondary-colormark-light.svg", width=150)
@@ -142,22 +151,21 @@ with st.sidebar:
 
     uploaded_file = st.file_uploader("Kies een bestand", type=["csv", "xlsx"])
 
-    raw_df = None
-    processed_df = pd.DataFrame()
-    filtered_df = pd.DataFrame() # Dit is de dataframe na alle filters
-
     if uploaded_file is not None:
-        raw_df = load_data(uploaded_file)
-        if raw_df is not None and not raw_df.empty:
-            st.success("Bestand succesvol geladen! Gedetecteerde kolommen:")
-            st.code(list(raw_df.columns))
+        # Als een nieuw bestand is geüpload, laad het en reset de processed_df en mapping
+        if uploaded_file != st.session_state.get('last_uploaded_file', None):
+            st.session_state.raw_df = load_data(uploaded_file)
+            st.session_state.processed_df = pd.DataFrame() # Reset processed_df bij nieuwe upload
+            st.session_state.column_mapping_user = {} # Reset mapping bij nieuwe upload
+            st.session_state.last_uploaded_file = uploaded_file # Bewaar de laatst geüploade file voor vergelijking
 
-            # --- Filters na succesvolle verwerking (worden pas getoond als processed_df beschikbaar is) ---
-            if 'processed_df' in st.session_state and not st.session_state.processed_df.empty:
-                processed_df = st.session_state.processed_df # Gebruik de reeds verwerkte DF
-
-                st.header("Filter op datum")
-                valid_dates = processed_df['date'].dropna()
+        if not st.session_state.raw_df.empty:
+            st.success("Bestand succesvol geladen!")
+            # Filters worden nu getoond als processed_df beschikbaar is
+            if not st.session_state.processed_df.empty:
+                st.subheader("Filters")
+                # Datum filter
+                valid_dates = st.session_state.processed_df['date'].dropna()
                 if not valid_dates.empty:
                     min_date_data = valid_dates.min().date()
                     max_date_data = valid_dates.max().date()
@@ -167,26 +175,27 @@ with st.sidebar:
 
                 col_start_date, col_end_date = st.columns(2)
                 with col_start_date:
-                    start_date = st.date_input("Vanaf", min_date_data, min_value=datetime(1900,1,1).date(), max_value=datetime(2100,1,1).date())
+                    start_date = st.date_input("Vanaf", min_date_data, min_value=datetime(1900,1,1).date(), max_value=datetime(2100,1,1).date(), key="sidebar_start_date")
                 with col_end_date:
-                    end_date = st.date_input("Tot", max_date_data, min_value=datetime(1900,1,1).date(), max_value=datetime(2100,1,1).date())
+                    end_date = st.date_input("Tot", max_date_data, min_value=datetime(1900,1,1).date(), max_value=datetime(2100,1,1).date(), key="sidebar_end_date")
 
                 if start_date > end_date:
                     st.error("Fout: De 'Tot' datum moet na of gelijk zijn aan de 'Vanaf' datum.")
                     filtered_df = pd.DataFrame()
                 else:
-                    filtered_df = processed_df[(processed_df['date'].dt.date >= start_date) & (processed_df['date'].dt.date <= end_date)].copy()
+                    filtered_df = st.session_state.processed_df[
+                        (st.session_state.processed_df['date'].dt.date >= start_date) &
+                        (st.session_state.processed_df['date'].dt.date <= end_date)
+                    ].copy()
 
-                st.session_state.start_date_filter = start_date
-                st.session_state.end_date_filter = end_date
-
-                st.header("Filter op Activiteittype")
+                # Activiteittype filter
                 if 'activity_type' in filtered_df.columns and not filtered_df.empty:
                     all_activity_types = ['Alle'] + sorted(filtered_df['activity_type'].dropna().unique().tolist())
                     selected_activity_types = st.multiselect(
                         "Selecteer activiteittypen",
                         options=all_activity_types,
-                        default=['Alle']
+                        default=['Alle'],
+                        key="sidebar_activity_type_select"
                     )
                     if 'Alle' not in selected_activity_types:
                         filtered_df = filtered_df[filtered_df['activity_type'].isin(selected_activity_types)]
@@ -195,27 +204,32 @@ with st.sidebar:
 
                 if filtered_df.empty:
                     st.warning("Geen gegevens beschikbaar voor de geselecteerde filters. Pas de filters aan.")
+                else:
+                    st.session_state.filtered_df = filtered_df # Sla gefilterde DF op in session_state
             else:
-                st.info("Ga naar het tabblad 'Data Instellingen' om je kolommen te mappen.")
-        elif raw_df is not None: # file was uploaded but is empty
+                st.info("Ga naar het tabblad '⚙️ Data Instellingen' om je kolommen te mappen en de data te verwerken.")
+                st.session_state.filtered_df = pd.DataFrame() # Zorg dat filtered_df leeg is
+        else: # raw_df is leeg na upload
             st.error("Het geüploade bestand is leeg of kan niet gelezen worden.")
-    else: # No file uploaded yet
-        st.info("Upload een Excel- of CSV-bestand met je sportactiviteiten om het dashboard te genereren. Zorg ervoor dat de kolomnamen correct zijn.")
-
+            st.session_state.filtered_df = pd.DataFrame()
+    else: # Geen bestand geüpload
+        st.info("Upload een Excel- of CSV-bestand met je sportactiviteiten om het dashboard te genereren.")
+        st.session_state.raw_df = pd.DataFrame()
+        st.session_state.processed_df = pd.DataFrame()
+        st.session_state.filtered_df = pd.DataFrame()
 
 # --- Hoofd Dashboard Content ---
 st.title("🏃‍♂️ Je Persoonlijke Sportactiviteiten Dashboard")
 st.markdown("Visualiseer en analyseer je prestaties met dit interactieve dashboard. Upload je gegevens en ontdek je vooruitgang!")
 
-if uploaded_file is None:
+# Bepaal welke tabs getoond moeten worden
+if st.session_state.raw_df.empty:
     st.info("Upload een Excel- of CSV-bestand met je sportactiviteiten om het dashboard te genereren.")
     st.markdown("---")
     st.markdown("""
         **Tip:** Zorg ervoor dat je bestand de benodigde gegevens bevat. Als de kolomnamen niet automatisch worden herkend, kun je deze na het uploaden handmatig mappen in het tabblad 'Data Instellingen'.
     """)
-    if uploaded_file is not None and raw_df is not None and raw_df.empty:
-        st.warning("Het geüploade bestand is leeg of kan niet gelezen worden.")
-elif raw_df is not None: # File is uploaded, now show tabs
+else:
     # Definieer de tabbladen. Data Instellingen is nu de eerste
     tab_settings, tab1, tab_new_period_overview, tab5 = st.tabs([
         "⚙️ Data Instellingen",
@@ -247,38 +261,43 @@ elif raw_df is not None: # File is uploaded, now show tabs
         }
         all_expected_columns = {**required_columns_map, **optional_columns}
 
-        raw_columns_cleaned = [col.strip().replace('Â®', '').replace('\xa0', '') for col in raw_df.columns]
+        raw_columns_cleaned = [col.strip().replace('Â®', '', regex=False).replace('\xa0', '', regex=False) for col in st.session_state.raw_df.columns]
         raw_columns_options = [''] + sorted(list(set(raw_columns_cleaned)))
 
-        if 'column_mapping_user' not in st.session_state:
-            st.session_state.column_mapping_user = {}
+        # Forceer herladen van selectboxen als er een nieuwe file is geupload
+        # Dit is cruciaal voor correcte reset van de mapping bij nieuwe files
+        file_hash = hash(uploaded_file.read()) if uploaded_file else 'no_file'
+        if 'current_file_hash' not in st.session_state or st.session_state.current_file_hash != file_hash:
+            st.session_state.column_mapping_user = {} # Reset mapping
+            st.session_state.current_file_hash = file_hash
+            # Rerun om de selectboxes te resetten
+            # Dit kan soms een infinite loop veroorzaken als niet correct behandeld.
+            # We vermijden dit door de reset logica in de sidebar ook te laten triggeren.
+            st.rerun()
+
 
         all_mapped_successfully = True
         for internal_name, display_name in all_expected_columns.items():
             current_selection = st.session_state.column_mapping_user.get(internal_name, '')
 
-            normalized_raw_cols = {col.lower().replace('.', '').replace(' ', '').replace('gem', 'gem').replace('avg', 'gem').replace('hr','hs'): col for col in raw_columns_options if col}
-            normalized_display_name = display_name.lower().replace('.', '').replace(' ', '').replace('gemiddelde', 'gem').replace('hartslag', 'hs')
+            normalized_raw_cols = {col.lower().replace('.', '').replace(' ', '').replace('®','').replace('â','').replace('à',''): col for col in raw_columns_options if col}
+            normalized_display_name = display_name.lower().replace('.', '').replace(' ', '').replace('gemiddelde', 'gem').replace('hartslag', 'hs').replace('®','').replace('â','').replace('à','')
 
             suggested_value = current_selection
             if not current_selection: # Alleen automatisch suggestie als nog niets is geselecteerd
                 if normalized_display_name in normalized_raw_cols:
                     suggested_value = normalized_raw_cols[normalized_display_name]
-                elif f"gem.{normalized_display_name}" in normalized_raw_cols: # Special case for "Gem. HS"
-                    suggested_value = normalized_raw_cols[f"gem.{normalized_display_name}"]
-                elif f"avg.{normalized_display_name}" in normalized_raw_cols:
-                    suggested_value = normalized_raw_cols[f"avg.{normalized_display_name}"]
-                elif internal_name == "avg_heart_rate_bpm" and ("gemhs" in normalized_raw_cols or "gem.hs" in normalized_raw_cols):
-                     if "gemhs" in normalized_raw_cols: suggested_value = normalized_raw_cols["gemhs"]
-                     elif "gem.hs" in normalized_raw_cols: suggested_value = normalized_raw_cols["gem.hs"]
-
-                # Check for common alternative names if direct match fails
-                if not suggested_value:
-                    if internal_name == "date" and "datumactiviteit" in normalized_raw_cols: suggested_value = normalized_raw_cols["datumactiviteit"]
-                    elif internal_name == "distance_km" and "afstandkm" in normalized_raw_cols: suggested_value = normalized_raw_cols["afstandkm"]
-                    elif internal_name == "duration_raw" and "tijdduur" in normalized_raw_cols: suggested_value = normalized_raw_cols["tijdduur"]
-                    elif internal_name == "calories_kcal" and "kcalorieën" in normalized_raw_cols: suggested_value = normalized_raw_cols["kcalorieën"]
-                    elif internal_name == "steps" and "aantalstappen" in normalized_raw_cols: suggested_value = normalized_raw_cols["aantalstappen"]
+                # Meer specifieke suggesties
+                elif internal_name == "activity_type" and "activiteittype" in normalized_raw_cols: suggested_value = normalized_raw_cols["activiteittype"]
+                elif internal_name == "date" and "datumactiviteit" in normalized_raw_cols: suggested_value = normalized_raw_cols["datumactiviteit"]
+                elif internal_name == "distance_km" and "afstandkm" in normalized_raw_cols: suggested_value = normalized_raw_cols["afstandkm"]
+                elif internal_name == "duration_raw" and "tijdduur" in normalized_raw_cols: suggested_value = normalized_raw_cols["tijdduur"]
+                elif internal_name == "calories_kcal" and ("calorieën" in normalized_raw_cols or "kcalorieën" in normalized_raw_cols):
+                    suggested_value = normalized_raw_cols.get("calorieën") or normalized_raw_cols.get("kcalorieën")
+                elif internal_name == "avg_heart_rate_bpm" and ("gemhs" in normalized_raw_cols or "avg.hs" in normalized_raw_cols or "gem.hs" in normalized_raw_cols or "gemidhs" in normalized_raw_cols or "gemiddeldehs" in normalized_raw_cols):
+                    suggested_value = normalized_raw_cols.get("gemhs") or normalized_raw_cols.get("avg.hs") or normalized_raw_cols.get("gem.hs") or normalized_raw_cols.get("gemidhs") or normalized_raw_cols.get("gemiddeldehs")
+                elif internal_name == "steps" and ("stappen" in normalized_raw_cols or "aantalstappen" in normalized_raw_cols):
+                    suggested_value = normalized_raw_cols.get("stappen") or normalized_raw_cols.get("aantalstappen")
 
 
             selected_column = st.selectbox(
@@ -294,14 +313,16 @@ elif raw_df is not None: # File is uploaded, now show tabs
 
         if not all_mapped_successfully:
             st.warning("Map alle **vereiste** kolommen (gemarkeerd als 'verwacht') om door te gaan naar de analyses.")
-            # Reset processed_df if mapping is incomplete
-            st.session_state.processed_df = pd.DataFrame()
+            st.session_state.processed_df = pd.DataFrame() # Reset processed_df als mapping incompleet is
         else:
             try:
-                processed_df = process_mapped_data(raw_df, st.session_state.column_mapping_user)
-                if not processed_df.empty:
+                processed_df_temp = process_mapped_data(st.session_state.raw_df, st.session_state.column_mapping_user)
+                if not processed_df_temp.empty:
                     st.success("Kolommen succesvol gemapt en data verwerkt! Je kunt nu de andere tabbladen gebruiken.")
-                    st.session_state.processed_df = processed_df # Opslaan in session state
+                    st.session_state.processed_df = processed_df_temp # Opslaan in session state
+                    # Zorg ervoor dat de filters in de zijbalk worden bijgewerkt
+                    # Dit kan door de app te reruns, maar vermijd infinite loops
+                    # We vertrouwen erop dat de Streamlit lifecycle dit oppakt
                 else:
                     st.error("Verwerkte dataframe is leeg. Controleer uw kolommapping en bestandsinhoud.")
                     st.session_state.processed_df = pd.DataFrame() # Reset processed_df
@@ -310,18 +331,20 @@ elif raw_df is not None: # File is uploaded, now show tabs
                 st.warning("Controleer uw kolomselecties.")
                 st.session_state.processed_df = pd.DataFrame() # Reset processed_df
 
-    # Alle volgende tabs zijn alleen zichtbaar en bruikbaar als processed_df bestaat en niet leeg is
-    if not filtered_df.empty: # filtered_df wordt alleen gevuld als processed_df succesvol is verwerkt
+
+    # Alle volgende tabs zijn alleen zichtbaar en bruikbaar als processed_df beschikbaar is
+    # We gebruiken st.session_state.filtered_df hier, die in de zijbalk wordt ingesteld
+    if not st.session_state.filtered_df.empty:
         st.markdown("---")
 
         # --- Sectie: Algemene Overzicht KPI's (alleen weergeven als data beschikbaar is) ---
         st.header("Algemeen Overzicht")
-        total_distance = filtered_df['distance_km'].sum()
-        avg_distance = filtered_df['distance_km'].mean()
-        total_duration_seconds = filtered_df['duration_seconds'].sum()
-        avg_duration_seconds = filtered_df['duration_seconds'].mean()
-        total_calories = filtered_df['calories_kcal'].sum()
-        num_activities = len(filtered_df)
+        total_distance = st.session_state.filtered_df['distance_km'].sum()
+        avg_distance = st.session_state.filtered_df['distance_km'].mean()
+        total_duration_seconds = st.session_state.filtered_df['duration_seconds'].sum()
+        avg_duration_seconds = st.session_state.filtered_df['duration_seconds'].mean()
+        total_calories = st.session_state.filtered_df['calories_kcal'].sum()
+        num_activities = len(st.session_state.filtered_df)
 
         kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
         with kpi1:
@@ -342,10 +365,10 @@ elif raw_df is not None: # File is uploaded, now show tabs
 
             col_dist_time, col_dur_time = st.columns(2)
 
-            if 'date' in filtered_df.columns and 'distance_km' in filtered_df.columns and filtered_df['date'].notna().any() and filtered_df['distance_km'].sum() > 0:
+            if 'date' in st.session_state.filtered_df.columns and 'distance_km' in st.session_state.filtered_df.columns and st.session_state.filtered_df['date'].notna().any() and st.session_state.filtered_df['distance_km'].sum() > 0:
                 with col_dist_time:
                     st.subheader("Afstand over tijd")
-                    df_daily_distance = filtered_df.groupby('date')['distance_km'].sum().reset_index()
+                    df_daily_distance = st.session_state.filtered_df.groupby('date')['distance_km'].sum().reset_index()
                     fig_distance_time = px.line(
                         df_daily_distance,
                         x='date',
@@ -360,10 +383,10 @@ elif raw_df is not None: # File is uploaded, now show tabs
                 with col_dist_time:
                     st.info("Niet genoeg data om 'Afstand over tijd' te tonen. Controleer de kolommapping voor 'Datum' en 'Afstand'.")
 
-            if 'date' in filtered_df.columns and 'duration_seconds' in filtered_df.columns and filtered_df['date'].notna().any() and filtered_df['duration_seconds'].sum() > 0:
+            if 'date' in st.session_state.filtered_df.columns and 'duration_seconds' in st.session_state.filtered_df.columns and st.session_state.filtered_df['date'].notna().any() and st.session_state.filtered_df['duration_seconds'].sum() > 0:
                 with col_dur_time:
                     st.subheader("Duur over tijd")
-                    df_daily_duration = filtered_df.groupby('date')['duration_seconds'].sum().reset_index()
+                    df_daily_duration = st.session_state.filtered_df.groupby('date')['duration_seconds'].sum().reset_index()
                     df_daily_duration['Tijd (HH:MM:SS)'] = df_daily_duration['duration_seconds'].apply(format_duration)
                     fig_duration_time = px.line(
                         df_daily_duration,
@@ -403,15 +426,15 @@ elif raw_df is not None: # File is uploaded, now show tabs
 
             st.markdown(f"**Toont {display_type.lower()} overzicht {aggregation_period_new_tab.lower()}**")
 
-            if (not filtered_df.empty and
-                'distance_km' in filtered_df.columns and filtered_df['distance_km'].notna().any() and
-                'duration_seconds' in filtered_df.columns and filtered_df['duration_seconds'].notna().any() and
-                'avg_heart_rate_bpm' in filtered_df.columns and filtered_df['avg_heart_rate_bpm'].notna().any() and
-                'year_week' in filtered_df.columns and filtered_df['year_week'].notna().any() and
-                'year_month' in filtered_df.columns and filtered_df['year_month'].notna().any()):
+            if (not st.session_state.filtered_df.empty and
+                'distance_km' in st.session_state.filtered_df.columns and st.session_state.filtered_df['distance_km'].notna().any() and
+                'duration_seconds' in st.session_state.filtered_df.columns and st.session_state.filtered_df['duration_seconds'].notna().any() and
+                'avg_heart_rate_bpm' in st.session_state.filtered_df.columns and st.session_state.filtered_df['avg_heart_rate_bpm'].notna().any() and
+                'year_week' in st.session_state.filtered_df.columns and st.session_state.filtered_df['year_week'].notna().any() and
+                'year_month' in st.session_state.filtered_df.columns and st.session_state.filtered_df['year_month'].notna().any()):
 
                 if aggregation_period_new_tab == 'Per Week':
-                    df_agg_new = filtered_df.groupby('year_week').agg(
+                    df_agg_new = st.session_state.filtered_df.groupby('year_week').agg(
                         total_distance=('distance_km', 'sum'),
                         avg_distance=('distance_km', 'mean'),
                         total_duration=('duration_seconds', 'sum'),
@@ -419,7 +442,7 @@ elif raw_df is not None: # File is uploaded, now show tabs
                         avg_heart_rate=('avg_heart_rate_bpm', lambda x: x[x > 0].mean())
                     ).reset_index()
 
-                    week_dates = filtered_df.groupby('year_week').agg(
+                    week_dates = st.session_state.filtered_df.groupby('year_week').agg(
                         min_date_week_start=('date_week_start', 'min'),
                         max_date_week_end=('date_week_end', 'max')
                     ).reset_index()
@@ -433,7 +456,7 @@ elif raw_df is not None: # File is uploaded, now show tabs
                     show_xaxis_range_slider = True
                     x_tickangle = 0
                 else: # Per Maand
-                    df_agg_new = filtered_df.groupby('year_month').agg(
+                    df_agg_new = st.session_state.filtered_df.groupby('year_month').agg(
                         total_distance=('distance_km', 'sum'),
                         avg_distance=('distance_km', 'mean'),
                         total_duration=('duration_seconds', 'sum'),
@@ -652,10 +675,10 @@ elif raw_df is not None: # File is uploaded, now show tabs
     with tab5: # Ruwe Data tab
         st.header("Ruwe Gegevens")
         st.markdown("Hier kun je de gefilterde ruwe data bekijken en eventueel exporteren.")
-        if not filtered_df.empty:
-            st.dataframe(filtered_df)
+        if not st.session_state.filtered_df.empty:
+            st.dataframe(st.session_state.filtered_df)
 
-            csv_export = filtered_df.to_csv(index=False).encode('utf-8')
+            csv_export = st.session_state.filtered_df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 label="Download gefilterde data als CSV",
                 data=csv_export,
