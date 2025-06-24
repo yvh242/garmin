@@ -531,8 +531,6 @@ if uploaded_file is not None and not filtered_df.empty:
         else:
             st.info("Selecteer een periode met data in het zijmenu om de vergelijking te zien.")
 
-    ---
-
     # NIEUW TABBLAD: Overzicht per Periode
     with tab_new_period_overview:
         st.header("Overzicht per Week of Maand")
