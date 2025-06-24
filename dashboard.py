@@ -606,6 +606,7 @@ if uploaded_file is not None and not filtered_df.empty:
                 show_xaxis_range_slider = False
                 x_tickangle = -45 # Schuine labels voor maanden
 
+
             # Formatteer duur kolommen voor weergave in zowel grafiek als tabel
             df_agg_new['Totale Duur (HH:MM:SS)'] = df_agg_new['Totale Duur (sec)'].apply(format_duration)
             df_agg_new['Gem. Duur (HH:MM:SS)'] = df_agg_new['Gem. Duur (sec)'].apply(format_duration)
@@ -639,6 +640,13 @@ if uploaded_file is not None and not filtered_df.empty:
                             ])
                         ) if show_xaxis_range_slider else None
                     )
+                    # Specifieke aanpassing voor maandweergave in grafiek
+                    if aggregation_period_new_tab == 'Per Maand':
+                        fig_total_dist_new.update_xaxes(
+                            tickformat="%Y-%m", # Formatteer als YYYY-MM
+                            dtick="M1", # Toon elke maand
+                            ticklabelmode="period" # Zorgt voor correcte labels bij de periode
+                        )
                     st.plotly_chart(fig_total_dist_new, use_container_width=True)
 
                 with col_avg_dist_new:
@@ -666,6 +674,13 @@ if uploaded_file is not None and not filtered_df.empty:
                             ])
                         ) if show_xaxis_range_slider else None
                     )
+                    # Specifieke aanpassing voor maandweergave in grafiek
+                    if aggregation_period_new_tab == 'Per Maand':
+                        fig_avg_dist_new.update_xaxes(
+                            tickformat="%Y-%m", # Formatteer als YYYY-MM
+                            dtick="M1", # Toon elke maand
+                            ticklabelmode="period" # Zorgt voor correcte labels bij de periode
+                        )
                     st.plotly_chart(fig_avg_dist_new, use_container_width=True)
 
                 # --- Grafieken voor Totaal en Gemiddeld Duur ---
@@ -696,6 +711,13 @@ if uploaded_file is not None and not filtered_df.empty:
                             ])
                         ) if show_xaxis_range_slider else None
                     )
+                    # Specifieke aanpassing voor maandweergave in grafiek
+                    if aggregation_period_new_tab == 'Per Maand':
+                        fig_total_dur_new.update_xaxes(
+                            tickformat="%Y-%m", # Formatteer als YYYY-MM
+                            dtick="M1", # Toon elke maand
+                            ticklabelmode="period" # Zorgt voor correcte labels bij de periode
+                        )
                     st.plotly_chart(fig_total_dur_new, use_container_width=True)
 
                 with col_avg_dur_new:
@@ -723,6 +745,13 @@ if uploaded_file is not None and not filtered_df.empty:
                             ])
                         ) if show_xaxis_range_slider else None
                     )
+                    # Specifieke aanpassing voor maandweergave in grafiek
+                    if aggregation_period_new_tab == 'Per Maand':
+                        fig_avg_dur_new.update_xaxes(
+                            tickformat="%Y-%m", # Formatteer als YYYY-MM
+                            dtick="M1", # Toon elke maand
+                            ticklabelmode="period" # Zorgt voor correcte labels bij de periode
+                        )
                     st.plotly_chart(fig_avg_dur_new, use_container_width=True)
             else: # display_type == 'Tabel'
                 st.subheader(f"Overzichtstabel {aggregation_period_new_tab.lower()}")
